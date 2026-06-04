@@ -388,7 +388,7 @@ class SettingsWindow(Gtk.Window):
 
         # Header Title
         title_lbl = Gtk.Label()
-        title_lbl.set_markup("<span size='large' weight='bold' foreground='#89b4fa'>Configurações do llama.cpp</span>")
+        title_lbl.set_markup("<span size='large' weight='bold'>Configurações do llama.cpp</span>")
         title_lbl.set_xalign(0.0)
         grid.attach(title_lbl, 0, 0, 2, 1)
 
@@ -743,9 +743,6 @@ class SettingsWindow(Gtk.Window):
 # Main Tray Application
 class LlamaTrayApp:
     def __init__(self):
-        # Load custom neon Catppuccin Mocha stylesheet
-        self.apply_custom_css()
-        
         # Init Notifications
         Notify.init("llama.tray")
 
@@ -779,72 +776,6 @@ class LlamaTrayApp:
         signal.signal(signal.SIGINT, self.quit)
         signal.signal(signal.SIGTERM, self.quit)
 
-    def apply_custom_css(self):
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_data(b"""
-            window {
-                background-color: #1e1e2e;
-                color: #cdd6f4;
-                font-family: 'Outfit', 'Inter', 'Sans', sans-serif;
-            }
-            button {
-                background-color: #313244;
-                color: #cdd6f4;
-                border-radius: 6px;
-                border: 1px solid #45475a;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            button:hover {
-                background-color: #45475a;
-                color: #f5c2e7;
-            }
-            button:disabled {
-                background-color: #181825;
-                color: #585b70;
-                border-color: #313244;
-            }
-            button.suggested-action {
-                background-color: #89b4fa;
-                color: #11111b;
-                border: none;
-            }
-            button.suggested-action:hover {
-                background-color: #b4befe;
-            }
-            button.destructive-action {
-                background-color: #f38ba8;
-                color: #11111b;
-                border: none;
-            }
-            button.destructive-action:hover {
-                background-color: #f5e0dc;
-            }
-            entry, textview text {
-                background-color: #181825;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-                padding: 6px;
-            }
-            label {
-                font-size: 13px;
-            }
-            combobox {
-                background-color: #313244;
-                color: #cdd6f4;
-                border: 1px solid #45475a;
-                border-radius: 6px;
-            }
-            combobox window {
-                background-color: #313244;
-            }
-        """)
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
 
     def show_notification(self, title, message, icon_type="info"):
         icon_name = "llama_running" if icon_type == "success" else "llama_stopped"
