@@ -107,35 +107,18 @@ class LlamaConfig:
         self.save()
 
 
-def get_configured_port(args_str, default=8080):
-    try:
-        parts = shlex.split(args_str)
-        for i, part in enumerate(parts):
-            if part in ("-p", "--port") and i + 1 < len(parts):
-                return int(parts[i+1])
-    except Exception:
-        pass
-    return default
-
-
 class LlamaProcessManager:
-    def __init__(self, config):
+    def __init__(self, config, on_unexpected_exit=None):
         self.config = config
         self.process = None
         self.log_file_path = os.path.join(LOG_DIR, "llama.log")
+        self.on_unexpected_exit = on_unexpected_exit
+        self.intentional_stop = False
 
     def is_running(self):
         if self.process is None:
             return False
         return self.process.poll() is None
-
-    def check_port_free(self, port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("127.0.0.1", port))
-                return True
-            except OSError:
-                return False
 
     def rotate_logs(self):
         try:
@@ -150,14 +133,13 @@ class LlamaProcessManager:
 
     def start(self):
         if self.is_running():
-            return True, "Servidor já está rodando."
+            return True, "O servidor já está a correr."
 
         config_data = self.config.get_data()
         version = config_data.get("current_version", "")
         if not version:
-            return False, "Nenhuma versão ativa. Por favor, vá em Configurações e instale uma versão."
+            return False, "Nenhuma versão ativa. Por favor, vá às Configurações e instale uma versão."
 
-        # Busca o diretório correto resolvendo o ID baseado no backend configurado
         backend = config_data.get("backend", "vulkan")
         version_id = updater.get_version_id(version, backend)
         
@@ -167,9 +149,6 @@ class LlamaProcessManager:
             return False, f"Executável não encontrado para o backend '{backend}' em: {server_bin}"
 
         args_str = config_data.get("args", "")
-        port = get_configured_port(args_str)
-        if not self.check_port_free(port):
-            return False, f"Porta {port} ocupada. Altere nas configurações ou feche o outro serviço."
 
         self.rotate_logs()
 
@@ -196,6 +175,8 @@ class LlamaProcessManager:
 
         try:
             log_file = open(self.log_file_path, "a")
+            self.intentional_stop = False
+            
             self.process = subprocess.Popen(
                 cmd,
                 cwd=version_dir,
@@ -206,14 +187,35 @@ class LlamaProcessManager:
                 start_new_session=True
             )
             log_file.close()
+            
+            # Inicia a thread sentinela
+            threading.Thread(target=self._watch_process, daemon=True).start()
+            
             return True, "Servidor iniciado."
         except Exception as e:
             return False, f"Falha ao iniciar processo: {e}"
+
+    def _watch_process(self):
+        """Thread sentinela que aguarda o encerramento do processo para capturar o código de saída."""
+        if not self.process:
+            return
+            
+        try:
+            exit_code = self.process.wait()
+        except Exception:
+            exit_code = -1
+            
+        # Se não fomos nós a pedir a paragem, reportamos o crash
+        if not self.intentional_stop:
+            self.process = None
+            if self.on_unexpected_exit:
+                GLib.idle_add(self.on_unexpected_exit, exit_code)
 
     def stop(self):
         if not self.is_running():
             return True
 
+        self.intentional_stop = True
         try:
             self.process.terminate()
             try:
@@ -381,7 +383,7 @@ class SettingsWindow(Gtk.Window):
         version_hbox.pack_start(self.version_combo, True, True, 0)
         
         self.refresh_releases_btn = Gtk.Button()
-        self.refresh_releases_btn.set_tooltip_text("Buscar atualizações do GitHub")
+        self.refresh_releases_btn.set_tooltip_text("Procurar atualizações no GitHub")
         refresh_img = Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
         self.refresh_releases_btn.set_image(refresh_img)
         self.refresh_releases_btn.connect("clicked", lambda w: self.load_releases(force=True))
@@ -419,7 +421,7 @@ class SettingsWindow(Gtk.Window):
         hbox_btn = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         vbox.pack_start(hbox_btn, False, False, 0)
 
-        self.action_btn = Gtk.Button(label="Salvar e Aplicar")
+        self.action_btn = Gtk.Button(label="Guardar e Aplicar")
         self.action_btn.get_style_context().add_class("suggested-action")
         self.action_btn.connect("clicked", self.on_action_clicked)
         hbox_btn.pack_end(self.action_btn, False, False, 0)
@@ -448,7 +450,7 @@ class SettingsWindow(Gtk.Window):
         self.version_combo.set_sensitive(False)
         self.refresh_releases_btn.set_sensitive(False)
         self.version_combo.remove_all()
-        self.version_combo.append("loading", "Buscando versões do GitHub...")
+        self.version_combo.append("loading", "A procurar versões no GitHub...")
         self.version_combo.set_active(0)
         
         def run_fetch():
@@ -468,13 +470,8 @@ class SettingsWindow(Gtk.Window):
         self.repopulate_version_combo()
 
     def repopulate_version_combo(self):
-        """
-        Popula dinamicamente as versões checando a instalação específica 
-        para o backend que está selecionado neste exato momento.
-        """
         selected_tag = self.version_combo.get_active_id()
         
-        # Desconecta temporariamente o sinal para evitar loops de alteração involuntários
         try:
             self.version_combo.disconnect_by_func(self.on_version_changed)
         except TypeError:
@@ -492,7 +489,6 @@ class SettingsWindow(Gtk.Window):
             status_text = " (Instalado)" if is_inst else " (Disponível)"
             items.append((tag, f"{tag}{status_text}"))
             
-        # Adiciona fallbacks locais verificando o ID físico da pasta
         installed_folders = updater.get_installed_versions()
         local_tags_added = set()
         for folder in installed_folders:
@@ -515,7 +511,6 @@ class SettingsWindow(Gtk.Window):
         for tag, display in items:
             self.version_combo.append(tag, display)
 
-        # Restaura a seleção inteligente
         active_index = 0
         current_version = self.app.config.get_data().get("current_version", "")
         tag_to_select = selected_tag if selected_tag and selected_tag not in ("loading", "none") else current_version
@@ -531,14 +526,13 @@ class SettingsWindow(Gtk.Window):
         self.refresh_releases_btn.set_sensitive(True)
         
         if not self.online_releases_loaded:
-            self.status_lbl.set_text(f"Offline: mostrando apenas versões locais. (Erro: {self.fetch_error_msg})")
+            self.status_lbl.set_text(f"Offline: a mostrar apenas versões locais. (Erro: {self.fetch_error_msg})")
         else:
             self.status_lbl.set_text("")
             
         self.version_combo.connect("changed", self.on_version_changed)
 
     def on_backend_changed(self, combo):
-        # Quando altera o backend, redesenha o status (Instalado/Disponível) do combo de versões
         self.repopulate_version_combo()
         self.update_action_button_label()
 
@@ -552,14 +546,14 @@ class SettingsWindow(Gtk.Window):
         selected_version = self.get_selected_version()
         backend = self.backend_combo.get_active_id()
         if not selected_version or selected_version in ("loading", "none") or not backend:
-            self.action_btn.set_label("Salvar e Aplicar")
+            self.action_btn.set_label("Guardar e Aplicar")
             return
             
         is_inst = updater.is_version_installed(selected_version, backend)
         if is_inst:
-            self.action_btn.set_label("Salvar e Aplicar")
+            self.action_btn.set_label("Guardar e Aplicar")
         else:
-            self.action_btn.set_label("Baixar, Instalar e Aplicar")
+            self.action_btn.set_label("Transferir, Instalar e Aplicar")
 
     def on_action_clicked(self, widget):
         selected_version = self.get_selected_version()
@@ -587,7 +581,7 @@ class SettingsWindow(Gtk.Window):
 
         if updater.is_version_installed(selected_version, backend):
             self.app.config.set("current_version", selected_version)
-            self.app.show_notification("Configuração Salva", f"Versão {selected_version} ({backend}) ativa.")
+            self.app.show_notification("Configuração Guardada", f"Versão {selected_version} ({backend}) ativa.")
             
             if self.app.process_manager.is_running():
                 self.app.restart_server()
@@ -605,9 +599,9 @@ class SettingsWindow(Gtk.Window):
         if not release_obj:
             dialog = Gtk.MessageDialog(
                 transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK, text="Erro ao Localizar Release",
+                buttons=Gtk.ButtonsType.OK, text="Erro ao Localizar Lançamento",
             )
-            dialog.format_secondary_text("Não foi possível encontrar metadados para baixar essa versão offline.")
+            dialog.format_secondary_text("Não foi possível encontrar metadados para transferir esta versão offline.")
             dialog.run()
             dialog.destroy()
             return
@@ -618,7 +612,7 @@ class SettingsWindow(Gtk.Window):
                 transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
                 buttons=Gtk.ButtonsType.OK, text="Asset Não Disponível",
             )
-            dialog.format_secondary_text(f"Não encontramos um binário Linux x64 compatível com '{backend}' na release {tag_name}.")
+            dialog.format_secondary_text(f"Não encontrámos um binário compatível com '{backend}' no lançamento {tag_name}.")
             dialog.run()
             dialog.destroy()
             return
@@ -626,7 +620,7 @@ class SettingsWindow(Gtk.Window):
         asset_name, download_url, expected_sha256 = asset_info
 
         self.set_sensitive_inputs(False)
-        self.status_lbl.set_text("Iniciando download...")
+        self.status_lbl.set_text("A iniciar transferência...")
         self.progress_bar.set_fraction(0.0)
         self.progress_bar.show()
         
@@ -661,8 +655,8 @@ class SettingsWindow(Gtk.Window):
         self.app.config.set("current_version", tag_name)
         
         self.app.show_notification(
-            "Download Concluído",
-            f"Versão {tag_name} do llama.cpp foi instalada com sucesso!"
+            "Transferência Concluída",
+            f"Versão {tag_name} instalada com sucesso!"
         )
         
         self.app.set_updating_state(False)
@@ -682,7 +676,7 @@ class SettingsWindow(Gtk.Window):
             transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
             buttons=Gtk.ButtonsType.OK, text="Erro na Instalação",
         )
-        dialog.format_secondary_text(f"Ocorreu um erro ao instalar o llama.cpp:\n\n{err_msg}")
+        dialog.format_secondary_text(f"Ocorreu um erro:\n\n{err_msg}")
         dialog.run()
         dialog.destroy()
 
@@ -698,7 +692,12 @@ class LlamaTrayApp:
         Notify.init("llama.tray")
 
         self.config = LlamaConfig()
-        self.process_manager = LlamaProcessManager(self.config)
+        
+        # Conecta a função de callback ao ProcessManager
+        self.process_manager = LlamaProcessManager(
+            self.config,
+            on_unexpected_exit=self.on_server_crashed
+        )
 
         ensure_icons()
 
@@ -730,12 +729,22 @@ class LlamaTrayApp:
         except Exception as e:
             print(f"Error showing notification: {e}", file=sys.stderr)
 
+    def on_server_crashed(self, exit_code):
+        """Método chamado pela sentinela quando o servidor termina de forma anormal."""
+        self.update_icon()
+        self.update_menu()
+        self.show_notification(
+            "Servidor Parou Inesperadamente", 
+            f"O llama-server encerrou com erro (Código: {exit_code}). Verifique os logs para mais detalhes (ex: porta ocupada).", 
+            "error"
+        )
+
     def update_menu(self):
         for child in self.menu.get_children():
             self.menu.remove(child)
 
         if self.is_updating:
-            start_stop_item = Gtk.MenuItem(label="Atualizando binários...")
+            start_stop_item = Gtk.MenuItem(label="A atualizar binários...")
             start_stop_item.set_sensitive(False)
         else:
             if self.process_manager.is_running():
@@ -773,14 +782,14 @@ class LlamaTrayApp:
     def set_updating_state(self, updating):
         self.is_updating = updating
         if updating:
-            self.indicator.set_icon_full("llama_updating", "Atualizando llama.cpp")
+            self.indicator.set_icon_full("llama_updating", "A atualizar llama.cpp")
         else:
             self.update_icon()
         self.update_menu()
 
     def update_icon(self):
         if self.process_manager.is_running():
-            self.indicator.set_icon_full("llama_running", "Servidor rodando")
+            self.indicator.set_icon_full("llama_running", "Servidor a correr")
         else:
             self.indicator.set_icon_full("llama_stopped", "Servidor parado")
 
@@ -814,24 +823,24 @@ class LlamaTrayApp:
         GLib.timeout_add(1000, self.start_server)
 
     def check_updates_from_menu(self, widget):
-        self.show_notification("Llama.tray", "Checando por atualizações...", "info")
+        self.show_notification("Llama.tray", "A procurar atualizações...", "info")
         
         def run_check():
             try:
                 releases = updater.get_releases(force_check=True)
                 if not releases:
-                    GLib.idle_add(self.show_notification, "Llama.tray", "Nenhuma release encontrada no GitHub.", "info")
+                    GLib.idle_add(self.show_notification, "Llama.tray", "Nenhum lançamento encontrado no GitHub.", "info")
                     return
                     
                 latest_tag = releases[0].get("tag_name", "")
                 current_active = self.config.get_data().get("current_version", "")
                 
                 if latest_tag == current_active:
-                    GLib.idle_add(self.show_notification, "Llama.tray", f"Você já está na versão mais recente ({latest_tag})!", "info")
+                    GLib.idle_add(self.show_notification, "Llama.tray", f"Já está na versão mais recente ({latest_tag})!", "info")
                 else:
                     GLib.idle_add(self.notify_new_version, latest_tag)
             except Exception as e:
-                GLib.idle_add(self.show_notification, "Erro ao Checar", str(e), "error")
+                GLib.idle_add(self.show_notification, "Erro ao Procurar", str(e), "error")
 
         threading.Thread(target=run_check, daemon=True).start()
 

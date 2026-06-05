@@ -23,8 +23,7 @@ os.makedirs(INSTALL_DIR, exist_ok=True)
 def get_version_id(tag_name, backend):
     """
     Gera o identificador único da pasta com base na tag e no backend.
-    Mantém compatibilidade com versões antigas sem sufixo (cpu) se desejado,
-    mas isola perfeitamente novos backends como vulkan.
+    Isola perfeitamente as instalações (ex: b9495 e b9495-vulkan).
     """
     if backend == "cpu":
         return tag_name
@@ -33,13 +32,10 @@ def get_version_id(tag_name, backend):
 
 def parse_version_id(folder_name):
     """
-    Inverso de get_version_id. Extrai a tag base e o backend a partir do nome da pasta.
-    Útil para ler o diretório local de instalações.
+    Inverso de get_version_id. Extrai a tag base e o backend.
     """
     if folder_name.endswith("-vulkan"):
         return folder_name[:-7], "vulkan"
-    # Se no futuro adicionar rocm, openvino, etc:
-    # elif folder_name.endswith("-rocm"): return folder_name[:-5], "rocm"
     return folder_name, "cpu"
 
 
@@ -50,7 +46,6 @@ def get_releases(force_check=False):
     """
     now = time.time()
     
-    # Check cache first
     if not force_check and os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
@@ -60,7 +55,6 @@ def get_releases(force_check=False):
         except Exception:
             pass
 
-    # Fetch from GitHub
     url = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
     req = urllib.request.Request(
         url,
@@ -105,7 +99,7 @@ def get_asset_for_backend(release, backend):
                 digest = asset.get("digest", "")
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
                 return name, asset.get("browser_download_url"), sha256
-        else: # CPU backend
+        else: 
             if "vulkan" not in name and "rocm" not in name and "openvino" not in name and "s390x" not in name and "arm64" not in name:
                 digest = asset.get("digest", "")
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
@@ -116,7 +110,7 @@ def get_asset_for_backend(release, backend):
 
 def is_version_installed(tag_name, backend):
     """
-    Verifica se uma versão específica combinada com o seu backend está instalada.
+    Checks if a release version combined with its backend is already extracted.
     """
     version_id = get_version_id(tag_name, backend)
     version_dir = os.path.join(INSTALL_DIR, version_id)
@@ -126,7 +120,7 @@ def is_version_installed(tag_name, backend):
 
 def get_installed_versions():
     """
-    Retorna a lista de nomes das pastas físicas instaladas em INSTALL_DIR.
+    Returns a list of folder names that are currently installed/extracted.
     """
     if not os.path.exists(INSTALL_DIR):
         return []
@@ -163,7 +157,6 @@ class DownloadThread(threading.Thread):
         target_dir = os.path.join(INSTALL_DIR, self.version_id)
         
         try:
-            # 1. Download
             req = urllib.request.Request(
                 self.download_url,
                 headers={"User-Agent": "llama.tray-updater"}
@@ -189,7 +182,7 @@ class DownloadThread(threading.Thread):
                     
                     if total_size > 0 and self.on_progress:
                         percent = int((downloaded / total_size) * 100)
-                        GLib.idle_add(self.on_progress, f"Baixando: {percent}%", percent / 100.0)
+                        GLib.idle_add(self.on_progress, f"A transferir: {percent}%", percent / 100.0)
 
                 temp_file.close()
                 
@@ -198,7 +191,6 @@ class DownloadThread(threading.Thread):
                         os.remove(temp_file_path)
                     return
                 
-                # 2. Checksum validation
                 calculated_sha = sha256_hash.hexdigest()
                 if self.expected_sha256 and calculated_sha != self.expected_sha256:
                     if os.path.exists(temp_file_path):
@@ -209,8 +201,7 @@ class DownloadThread(threading.Thread):
                         f"Calculado: {calculated_sha}"
                     )
 
-            # 3. Extraction
-            GLib.idle_add(self.on_progress, "Extraindo binários...", 0.99)
+            GLib.idle_add(self.on_progress, "A extrair binários...", 0.99)
             
             if os.path.exists(target_dir):
                 import shutil
@@ -231,7 +222,7 @@ class DownloadThread(threading.Thread):
                         for member in members:
                             if member.name.startswith(strip_prefix):
                                 member.name = member.name[len(strip_prefix):]
-                                if member.name:
+                                if member.name: 
                                     tar.extract(member, path=target_dir)
                     else:
                         tar.extractall(path=target_dir)
@@ -239,15 +230,14 @@ class DownloadThread(threading.Thread):
                 if os.path.exists(target_dir):
                     import shutil
                     shutil.rmtree(target_dir)
-                raise RuntimeError(f"Falha ao extrair o arquivo: {e}")
+                raise RuntimeError(f"Falha ao extrair o ficheiro: {e}")
             finally:
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
-            # 4. Verify extraction succeeded
             server_bin = os.path.join(target_dir, "llama-server")
             if not os.path.exists(server_bin):
-                raise RuntimeError("O arquivo extraído não contém o executável 'llama-server'.")
+                raise RuntimeError("O ficheiro extraído não contém o executável 'llama-server'.")
             
             os.chmod(server_bin, 0o755)
             
