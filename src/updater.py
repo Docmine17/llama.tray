@@ -20,6 +20,29 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(INSTALL_DIR, exist_ok=True)
 
 
+def get_version_id(tag_name, backend):
+    """
+    Gera o identificador único da pasta com base na tag e no backend.
+    Mantém compatibilidade com versões antigas sem sufixo (cpu) se desejado,
+    mas isola perfeitamente novos backends como vulkan.
+    """
+    if backend == "cpu":
+        return tag_name
+    return f"{tag_name}-{backend}"
+
+
+def parse_version_id(folder_name):
+    """
+    Inverso de get_version_id. Extrai a tag base e o backend a partir do nome da pasta.
+    Útil para ler o diretório local de instalações.
+    """
+    if folder_name.endswith("-vulkan"):
+        return folder_name[:-7], "vulkan"
+    # Se no futuro adicionar rocm, openvino, etc:
+    # elif folder_name.endswith("-rocm"): return folder_name[:-5], "rocm"
+    return folder_name, "cpu"
+
+
 def get_releases(force_check=False):
     """
     Fetches releases from GitHub API with a 1-hour cache.
@@ -35,7 +58,6 @@ def get_releases(force_check=False):
             if now - cached.get("timestamp", 0) < CACHE_EXPIRY_SECONDS:
                 return cached.get("releases", [])
         except Exception:
-            # Ignore cache read errors and refetch
             pass
 
     # Fetch from GitHub
@@ -46,11 +68,9 @@ def get_releases(force_check=False):
     )
     
     try:
-        # Timeout after 10 seconds
         with urllib.request.urlopen(req, timeout=10) as response:
             releases = json.loads(response.read().decode())
             
-        # Write to cache
         try:
             with open(CACHE_FILE, "w") as f:
                 json.dump({"timestamp": now, "releases": releases}, f)
@@ -67,14 +87,9 @@ def get_releases(force_check=False):
 def get_asset_for_backend(release, backend):
     """
     Finds the correct asset in the release based on backend.
-    Supported backends: 'vulkan', 'cpu' (or other strings).
-    Returns (asset_name, download_url, expected_sha256) or None.
     """
     assets = release.get("assets", [])
     
-    # We look for files matching llama-<tag>-bin-ubuntu-<backend>-x64.tar.gz
-    # Standard format: llama-b9496-bin-ubuntu-vulkan-x64.tar.gz
-    # or llama-b9496-bin-ubuntu-x64.tar.gz (for CPU)
     for asset in assets:
         name = asset.get("name", "")
         if not (name.startswith("llama-") and name.endswith(".tar.gz")):
@@ -82,7 +97,6 @@ def get_asset_for_backend(release, backend):
         if "bin-ubuntu" not in name:
             continue
         
-        # Check architecture (limit to x64 for now, but can be made flexible)
         if "x64" not in name:
             continue
             
@@ -100,18 +114,19 @@ def get_asset_for_backend(release, backend):
     return None
 
 
-def is_version_installed(tag_name):
+def is_version_installed(tag_name, backend):
     """
-    Checks if a release version is already downloaded and extracted.
+    Verifica se uma versão específica combinada com o seu backend está instalada.
     """
-    version_dir = os.path.join(INSTALL_DIR, tag_name)
+    version_id = get_version_id(tag_name, backend)
+    version_dir = os.path.join(INSTALL_DIR, version_id)
     server_bin = os.path.join(version_dir, "llama-server")
     return os.path.exists(server_bin) and os.path.isfile(server_bin)
 
 
 def get_installed_versions():
     """
-    Returns a list of tags that are currently installed/extracted in INSTALL_DIR.
+    Retorna a lista de nomes das pastas físicas instaladas em INSTALL_DIR.
     """
     if not os.path.exists(INSTALL_DIR):
         return []
@@ -129,9 +144,10 @@ def get_installed_versions():
 
 
 class DownloadThread(threading.Thread):
-    def __init__(self, tag_name, download_url, expected_sha256, on_progress, on_done, on_error):
+    def __init__(self, tag_name, version_id, download_url, expected_sha256, on_progress, on_done, on_error):
         super().__init__()
         self.tag_name = tag_name
+        self.version_id = version_id
         self.download_url = download_url
         self.expected_sha256 = expected_sha256
         self.on_progress = on_progress
@@ -144,7 +160,7 @@ class DownloadThread(threading.Thread):
 
     def run(self):
         temp_file = None
-        target_dir = os.path.join(INSTALL_DIR, self.tag_name)
+        target_dir = os.path.join(INSTALL_DIR, self.version_id)
         
         try:
             # 1. Download
@@ -158,7 +174,6 @@ class DownloadThread(threading.Thread):
                 downloaded = 0
                 block_size = 8192
                 
-                # Use a tempfile inside the user's cache dir to avoid writing to /tmp
                 fd, temp_file_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tar.gz")
                 temp_file = os.fdopen(fd, "wb")
                 
@@ -197,7 +212,6 @@ class DownloadThread(threading.Thread):
             # 3. Extraction
             GLib.idle_add(self.on_progress, "Extraindo binários...", 0.99)
             
-            # Make sure target dir is clean
             if os.path.exists(target_dir):
                 import shutil
                 shutil.rmtree(target_dir)
@@ -205,7 +219,6 @@ class DownloadThread(threading.Thread):
             
             try:
                 with tarfile.open(temp_file_path, "r:gz") as tar:
-                    # Detect top-level directory inside the tar (e.g. "llama-b9495/")
                     members = tar.getmembers()
                     top_dirs = set()
                     for m in members:
@@ -213,18 +226,16 @@ class DownloadThread(threading.Thread):
                         if len(parts) > 1:
                             top_dirs.add(parts[0])
                     
-                    # If there's a single top-level dir, strip it when extracting
                     if len(top_dirs) == 1:
                         strip_prefix = top_dirs.pop() + "/"
                         for member in members:
                             if member.name.startswith(strip_prefix):
                                 member.name = member.name[len(strip_prefix):]
-                                if member.name:  # skip the directory entry itself
+                                if member.name:
                                     tar.extract(member, path=target_dir)
                     else:
                         tar.extractall(path=target_dir)
             except Exception as e:
-                # Clean up half-extracted files
                 if os.path.exists(target_dir):
                     import shutil
                     shutil.rmtree(target_dir)
@@ -238,14 +249,12 @@ class DownloadThread(threading.Thread):
             if not os.path.exists(server_bin):
                 raise RuntimeError("O arquivo extraído não contém o executável 'llama-server'.")
             
-            # Make sure it's executable
             os.chmod(server_bin, 0o755)
             
             GLib.idle_add(self.on_progress, "Instalação concluída!", 1.0)
             GLib.idle_add(self.on_done, self.tag_name, target_dir)
 
         except Exception as e:
-            # Clean up target dir on error
             if os.path.exists(target_dir):
                 import shutil
                 shutil.rmtree(target_dir)
