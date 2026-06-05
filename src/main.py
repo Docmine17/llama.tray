@@ -7,7 +7,6 @@ import shlex
 import threading
 import signal
 import ctypes
-import ctypes
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('AyatanaAppIndicator3', '0.1')
@@ -95,7 +94,7 @@ class LlamaConfig:
         self.data = {
             "current_version": "",
             "backend": "vulkan",
-            "env_vars": "GGML_VULKAN=1",
+            "env_vars": "",
             "args": "--port 8080 --host 127.0.0.1"
         }
         self.load()
