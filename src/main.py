@@ -12,7 +12,6 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('AyatanaAppIndicator3', '0.1')
 gi.require_version('Notify', '0.7')
 from gi.repository import Gtk, Gdk, GLib, AyatanaAppIndicator3, Notify
-import cairo
 import updater
 
 # Directory configurations
@@ -20,57 +19,16 @@ INSTALL_DIR = os.path.expanduser("~/.local/share/llama.tray/bin")
 CONFIG_DIR = os.path.expanduser("~/.config/llama.tray")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 LOG_DIR = os.path.expanduser("~/.local/share/llama.tray")
-ICON_DIR = os.path.expanduser("~/.local/share/llama.tray")
+
+# Resolve o caminho para a pasta data/tray de forma relativa ao main.py
+# (Assumindo que main.py está em src/ e os ícones em data/tray/)
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ICON_DIR = os.path.join(BASE_DIR, "data", "tray")
+APP_ICON = os.path.join(BASE_DIR, "data", "llama-tray-icon.svg")
 
 os.makedirs(INSTALL_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
-
-
-def draw_llama_icon(output_path, color_rgb):
-    """Draws a neat modern stylized llama icon and saves to PNG."""
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 64, 64)
-    ctx = cairo.Context(surface)
-    
-    ctx.set_operator(cairo.OPERATOR_CLEAR)
-    ctx.paint()
-    ctx.set_operator(cairo.OPERATOR_OVER)
-    
-    ctx.set_source_rgb(*color_rgb)
-    ctx.set_line_width(4.0)
-    ctx.set_line_join(cairo.LINE_JOIN_ROUND)
-    ctx.set_line_cap(cairo.LINE_CAP_ROUND)
-    
-    ctx.move_to(22, 58)
-    ctx.line_to(22, 34)
-    ctx.line_to(14, 12)
-    ctx.line_to(20, 12)
-    ctx.line_to(24, 26)
-    ctx.line_to(26, 8)
-    ctx.line_to(32, 8)
-    ctx.line_to(34, 26)
-    ctx.line_to(48, 26)
-    ctx.line_to(48, 36)
-    ctx.line_to(38, 36)
-    ctx.line_to(34, 42)
-    ctx.line_to(34, 58)
-    ctx.stroke()
-    
-    import math
-    ctx.arc(33, 22, 2.5, 0, 2 * math.pi)
-    ctx.fill()
-    
-    surface.write_to_png(output_path)
-    surface.finish()
-
-
-def ensure_icons():
-    try:
-        draw_llama_icon(os.path.join(ICON_DIR, "llama_stopped.png"), (0.55, 0.58, 0.64))
-        draw_llama_icon(os.path.join(ICON_DIR, "llama_running.png"), (0.18, 0.8, 0.44))
-        draw_llama_icon(os.path.join(ICON_DIR, "llama_updating.png"), (0.2, 0.6, 1.0))
-    except Exception as e:
-        print(f"Error drawing icons: {e}", file=sys.stderr)
 
 
 class LlamaConfig:
@@ -188,7 +146,6 @@ class LlamaProcessManager:
             )
             log_file.close()
             
-            # Inicia a thread sentinela
             threading.Thread(target=self._watch_process, daemon=True).start()
             
             return True, "Servidor iniciado."
@@ -196,7 +153,6 @@ class LlamaProcessManager:
             return False, f"Falha ao iniciar processo: {e}"
 
     def _watch_process(self):
-        """Thread sentinela que aguarda o encerramento do processo para capturar o código de saída."""
         if not self.process:
             return
             
@@ -205,7 +161,6 @@ class LlamaProcessManager:
         except Exception:
             exit_code = -1
             
-        # Se não fomos nós a pedir a paragem, reportamos o crash
         if not self.intentional_stop:
             self.process = None
             if self.on_unexpected_exit:
@@ -343,6 +298,10 @@ class SettingsWindow(Gtk.Window):
         self.app = app
         self.set_default_size(550, 480)
         self.set_resizable(False)
+
+        # Set main app icon for the window
+        if os.path.exists(APP_ICON):
+            self.set_icon_from_file(APP_ICON)
 
         self.download_thread = None
         self.releases_list = []
@@ -668,21 +627,20 @@ class LlamaTrayApp:
 
         self.config = LlamaConfig()
         
-        # Conecta a função de callback ao ProcessManager
         self.process_manager = LlamaProcessManager(
             self.config,
             on_unexpected_exit=self.on_server_crashed
         )
 
-        ensure_icons()
-
         self.settings_window = None
         self.logs_window = None
         self.is_updating = False
 
+        # Apontamos o AppIndicator para ler diretamente da pasta ICON_DIR resolvida (data/tray)
+        # O nome que passamos aqui é SEM a extensão .svg
         self.indicator = AyatanaAppIndicator3.Indicator.new_with_path(
             "llama.tray",
-            "llama_stopped",
+            "llama-tray-stopped-symbolic",
             AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
             ICON_DIR
         )
@@ -696,8 +654,7 @@ class LlamaTrayApp:
         signal.signal(signal.SIGTERM, self.quit)
 
     def show_notification(self, title, message, icon_type="info"):
-        icon_name = "llama_running" if icon_type == "success" else "llama_stopped"
-        icon_path = os.path.join(ICON_DIR, f"{icon_name}.png")
+        icon_path = APP_ICON
         try:
             notification = Notify.Notification.new(title, message, icon_path)
             notification.show()
@@ -705,12 +662,11 @@ class LlamaTrayApp:
             print(f"Error showing notification: {e}", file=sys.stderr)
 
     def on_server_crashed(self, exit_code):
-        """Método chamado pela sentinela quando o servidor termina de forma anormal."""
         self.update_icon()
         self.update_menu()
         self.show_notification(
             "Servidor Parou Inesperadamente", 
-            f"O llama-server encerrou com erro (Código: {exit_code}). Verifique os logs para mais detalhes (ex: porta ocupada).", 
+            f"O llama-server encerrou com erro (Código: {exit_code}). Verifique os logs para mais detalhes.", 
             "error"
         )
 
@@ -757,16 +713,16 @@ class LlamaTrayApp:
     def set_updating_state(self, updating):
         self.is_updating = updating
         if updating:
-            self.indicator.set_icon_full("llama_updating", "A atualizar llama.cpp")
+            self.indicator.set_icon_full("llama-tray-updating-symbolic", "A atualizar llama.cpp")
         else:
             self.update_icon()
         self.update_menu()
 
     def update_icon(self):
         if self.process_manager.is_running():
-            self.indicator.set_icon_full("llama_running", "Servidor a correr")
+            self.indicator.set_icon_full("llama-tray-running-symbolic", "Servidor a correr")
         else:
-            self.indicator.set_icon_full("llama_stopped", "Servidor parado")
+            self.indicator.set_icon_full("llama-tray-stopped-symbolic", "Servidor parado")
 
     def start_server(self):
         success, msg = self.process_manager.start()
@@ -819,8 +775,6 @@ class LlamaTrayApp:
             "info"
         )
         
-        # Abre automaticamente as configurações quando o usuário recebe a notificação
-        # O usuário já recebeu o aviso na notificação do sistema
         GLib.idle_add(self.open_settings, None)
 
     def open_settings(self, widget):

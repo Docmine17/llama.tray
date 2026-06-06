@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Llama Tray
+GenericName=Llama Server Manager
+Comment=Gerenciador de bandeja para o llama-server (llama.cpp)
+# O caminho absoluto para o interpretador e para o script principal
+Exec=/usr/bin/env python3 /home/gabriel/Projetos/llama.tray/src/main.py
+# O caminho absoluto para o ícone vetorial principal que criamos
+Icon=/home/gabriel/Projetos/llama.tray/data/llama-tray-icon.svg
+Terminal=false
+Categories=Utility;Development;System;
+Keywords=llama;ai;tray;ggml;server;
+StartupNotify=true
+StartupWMClass=llama.tray
