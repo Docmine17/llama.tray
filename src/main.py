@@ -560,13 +560,7 @@ class SettingsWindow(Gtk.Window):
         backend = self.backend_combo.get_active_id()
         
         if not selected_version or selected_version in ("loading", "none"):
-            dialog = Gtk.MessageDialog(
-                transient_for=self, flags=0, message_type=Gtk.MessageType.WARNING,
-                buttons=Gtk.ButtonsType.OK, text="Versão Inválida",
-            )
-            dialog.format_secondary_text("Por favor, selecione uma versão válida do llama.cpp.")
-            dialog.run()
-            dialog.destroy()
+            self.status_lbl.set_markup("<span color='red'>Por favor, selecione uma versão válida do llama.cpp.</span>")
             return
 
         env_buf = self.env_view.get_buffer()
@@ -597,24 +591,12 @@ class SettingsWindow(Gtk.Window):
                 break
                 
         if not release_obj:
-            dialog = Gtk.MessageDialog(
-                transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK, text="Erro ao Localizar Lançamento",
-            )
-            dialog.format_secondary_text("Não foi possível encontrar metadados para transferir esta versão offline.")
-            dialog.run()
-            dialog.destroy()
+            self.status_lbl.set_markup("<span color='red'>Erro: Não foi possível encontrar metadados para transferir esta versão offline.</span>")
             return
 
         asset_info = updater.get_asset_for_backend(release_obj, backend)
         if not asset_info:
-            dialog = Gtk.MessageDialog(
-                transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK, text="Asset Não Disponível",
-            )
-            dialog.format_secondary_text(f"Não encontrámos um binário compatível com '{backend}' no lançamento {tag_name}.")
-            dialog.run()
-            dialog.destroy()
+            self.status_lbl.set_markup(f"<span color='red'>Erro: Não encontrámos um binário compatível com '{backend}' no lançamento {tag_name}.</span>")
             return
 
         asset_name, download_url, expected_sha256 = asset_info
@@ -669,16 +651,9 @@ class SettingsWindow(Gtk.Window):
     def on_download_error(self, err_msg):
         self.set_sensitive_inputs(True)
         self.progress_bar.hide()
-        self.status_lbl.set_text("Falha na instalação.")
+        self.status_lbl.set_markup(f"<span color='red'>Falha na instalação: {err_msg}</span>")
         self.app.set_updating_state(False)
-
-        dialog = Gtk.MessageDialog(
-            transient_for=self, flags=0, message_type=Gtk.MessageType.ERROR,
-            buttons=Gtk.ButtonsType.OK, text="Erro na Instalação",
-        )
-        dialog.format_secondary_text(f"Ocorreu um erro:\n\n{err_msg}")
-        dialog.run()
-        dialog.destroy()
+        self.app.show_notification("Erro na Instalação", f"Ocorreu um erro: {err_msg}", "error")
 
     def on_destroy(self, widget):
         if self.download_thread and self.download_thread.is_alive():
@@ -801,13 +776,6 @@ class LlamaTrayApp:
             self.update_menu()
         else:
             self.show_notification("Erro ao Iniciar", msg, "error")
-            dialog = Gtk.MessageDialog(
-                transient_for=None, flags=0, message_type=Gtk.MessageType.ERROR,
-                buttons=Gtk.ButtonsType.OK, text="Erro ao Iniciar llama.cpp",
-            )
-            dialog.format_secondary_text(msg)
-            dialog.run()
-            dialog.destroy()
 
     def stop_server(self):
         success = self.process_manager.stop()
@@ -850,16 +818,10 @@ class LlamaTrayApp:
             f"A versão {latest_tag} está disponível. Abra as Configurações para atualizar.",
             "info"
         )
-        dialog = Gtk.MessageDialog(
-            transient_for=None, flags=0, message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.YES_NO, text="Nova Versão Disponível",
-        )
-        dialog.format_secondary_text(f"Deseja abrir as Configurações para instalar a versão {latest_tag}?")
-        response = dialog.run()
-        dialog.destroy()
         
-        if response == Gtk.ResponseType.YES:
-            self.open_settings(None)
+        # Abre automaticamente as configurações quando o usuário recebe a notificação
+        # O usuário já recebeu o aviso na notificação do sistema
+        GLib.idle_add(self.open_settings, None)
 
     def open_settings(self, widget):
         if self.settings_window is not None:
