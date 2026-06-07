@@ -4,9 +4,7 @@ Type=Application
 Name=Llama Tray
 GenericName=Llama Server Manager
 Comment=Tray manager for llama-server (llama.cpp)
-# When packaged, the executable should be placed in /usr/bin/ or accessible via $PATH
-Exec=llama-tray
-# The packager should place the SVG in /usr/share/icons/hicolor/scalable/apps/
+Exec=bash -c "~/.local/bin/llama-tray"
 Icon=llama-tray-icon
 Terminal=false
 Categories=Utility;Development;System;
