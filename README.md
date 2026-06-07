@@ -1,30 +1,30 @@
 # Llama.tray
 
-`llama.tray` é uma aplicação leve para a bandeja do sistema (system tray) no Linux, construída em Python 3 e GTK 3, projetada para gerenciar, configurar, monitorar e atualizar instâncias do `llama-server` (`llama.cpp`).
+`llama.tray` is a lightweight system tray application for Linux, built with Python 3 and GTK 3, designed to manage, configure, monitor, and update instances of `llama-server` (`llama.cpp`).
 
-## Funcionalidades
+## Features
 
-- **Controle Direto da Tray**: Iniciar e parar o servidor do llama.cpp com um clique. O ícone da bandeja muda de cor dinamicamente (Verde: rodando, Vermelho: parado, Azul: atualizando/baixando).
-- **Gerenciador de Atualizações Integrado**:
-  - Consulta as releases oficiais no repositório `ggml-org/llama.cpp`.
-  - Exibe um dropdown ordenado com as versões disponíveis para download ou já instaladas localmente (cache local).
-  - Faz o download automático e valida a integridade do pacote usando hashes **SHA256**.
-  - Extrai e configura o executável automaticamente.
-- **Painel de Configurações**:
-  - Seleção de backend de aceleração (Vulkan para GPU ou CPU padrão).
-  - Definição de variáveis de ambiente personalizadas.
-  - Customização de argumentos para o processo (especificação de porta, caminhos de modelo, etc.).
-- **Monitor de Logs em Tempo Real**:
-  - Visualizador de logs com auto-scroll integrado ao GTK 3.
-  - Rotação automática de logs (limite de 10 MB por arquivo para poupar disco).
+- **Direct Tray Control**: Start and stop the llama.cpp server with a single click. The tray icon changes color dynamically (Green: running, Red: stopped, Blue: updating/downloading).
+- **Integrated Update Manager**:
+  - Queries official releases from the `ggml-org/llama.cpp` repository.
+  - Displays an ordered dropdown with available versions for download or already installed locally (local cache).
+  - Automatically downloads and validates the package integrity using **SHA256** hashes.
+  - Automatically extracts and configures the executable.
+- **Settings Panel**:
+  - Selection of acceleration backend (Vulkan for GPU or default CPU).
+  - Custom environment variable definition.
+  - Process argument customization (port specification, model paths, etc.).
+- **Real-time Log Monitor**:
+  - GTK 3-based log viewer with integrated auto-scroll.
+  - Automatic log rotation (10 MB limit per file to save disk space).
 
-## Estrutura de Diretórios Utilizados
+## Directory Structure Used
 
-- **Instalação dos binários do llama.cpp**: `~/.local/share/llama.tray/bin/<version>/`
-- **Arquivo de Configuração (JSON)**: `~/.config/llama.tray/config.json`
-- **Log do Servidor**: `~/.local/share/llama.tray/llama.log`
-- **Cache de Atualizações**: `~/.cache/llama.tray/releases_cache.json`
+- **llama.cpp binaries installation**: `~/.local/share/llama.tray/bin/<version>/`
+- **Configuration file (JSON)**: `~/.config/llama.tray/config.json`
+- **Server log**: `~/.local/share/llama.tray/llama.log`
+- **Update cache**: `~/.cache/llama.tray/releases_cache.json`
 
-## Pré-requisitos
+## Prerequisites
 
-Você precisará ter o Python 3, PyGObject e as bibliotecas do Ayatana AppIndicator instalados em seu sistema.
+You will need Python 3, PyGObject, and Ayatana AppIndicator libraries installed on your system.
