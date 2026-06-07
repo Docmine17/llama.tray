@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import time
 import urllib.request
@@ -11,8 +10,8 @@ import threading
 from gi.repository import GLib
 
 # Directory setup
-CACHE_DIR = os.path.expanduser("~/.cache/llama.tray")
-INSTALL_DIR = os.path.expanduser("~/.local/share/llama.tray/bin")
+CACHE_DIR = os.path.expanduser("~/.cache/llama-tray")
+INSTALL_DIR = os.path.expanduser("~/.local/share/llama-tray/bin")
 CACHE_FILE = os.path.join(CACHE_DIR, "releases_cache.json")
 CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 
@@ -22,8 +21,8 @@ os.makedirs(INSTALL_DIR, exist_ok=True)
 
 def get_version_id(tag_name, backend):
     """
-    Gera o identificador único da pasta com base na tag e no backend.
-    Isola perfeitamente as instalações (ex: b9495 e b9495-vulkan).
+    Generates a unique folder identifier based on the tag and backend.
+    Perfectly isolates installations (e.g., b9495 and b9495-vulkan).
     """
     if backend == "cpu":
         return tag_name
@@ -32,7 +31,7 @@ def get_version_id(tag_name, backend):
 
 def parse_version_id(folder_name):
     """
-    Inverso de get_version_id. Extrai a tag base e o backend.
+    Inverse of get_version_id. Extracts the base tag and the backend.
     """
     if folder_name.endswith("-vulkan"):
         return folder_name[:-7], "vulkan"
@@ -73,14 +72,14 @@ def get_releases(force_check=False):
             
         return releases
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Erro de conexão ao buscar atualizações: {e.reason}")
+        raise RuntimeError(f"Connection error while fetching updates: {e.reason}")
     except Exception as e:
-        raise RuntimeError(f"Erro ao processar atualizações: {e}")
+        raise RuntimeError(f"Error processing updates: {e}")
 
 
 def get_asset_for_backend(release, backend):
     """
-    Finds the correct asset in the release based on backend.
+    Finds the correct asset in the release based on the specified backend.
     """
     assets = release.get("assets", [])
     
@@ -100,6 +99,7 @@ def get_asset_for_backend(release, backend):
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
                 return name, asset.get("browser_download_url"), sha256
         else: 
+            # CPU backend
             if "vulkan" not in name and "rocm" not in name and "openvino" not in name and "s390x" not in name and "arm64" not in name:
                 digest = asset.get("digest", "")
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
@@ -182,7 +182,7 @@ class DownloadThread(threading.Thread):
                     
                     if total_size > 0 and self.on_progress:
                         percent = int((downloaded / total_size) * 100)
-                        GLib.idle_add(self.on_progress, f"A transferir: {percent}%", percent / 100.0)
+                        GLib.idle_add(self.on_progress, f"Downloading: {percent}%", percent / 100.0)
 
                 temp_file.close()
                 
@@ -196,12 +196,12 @@ class DownloadThread(threading.Thread):
                     if os.path.exists(temp_file_path):
                         os.remove(temp_file_path)
                     raise ValueError(
-                        f"Falha na verificação de integridade (SHA256 incorreto).\n"
-                        f"Esperado: {self.expected_sha256}\n"
-                        f"Calculado: {calculated_sha}"
+                        f"Integrity check failed (Incorrect SHA256).\\n"
+                        f"Expected: {self.expected_sha256}\\n"
+                        f"Calculated: {calculated_sha}"
                     )
 
-            GLib.idle_add(self.on_progress, "A extrair binários...", 0.99)
+            GLib.idle_add(self.on_progress, "Extracting binaries...", 0.99)
             
             if os.path.exists(target_dir):
                 import shutil
@@ -230,18 +230,18 @@ class DownloadThread(threading.Thread):
                 if os.path.exists(target_dir):
                     import shutil
                     shutil.rmtree(target_dir)
-                raise RuntimeError(f"Falha ao extrair o ficheiro: {e}")
+                raise RuntimeError(f"Failed to extract archive: {e}")
             finally:
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
 
             server_bin = os.path.join(target_dir, "llama-server")
             if not os.path.exists(server_bin):
-                raise RuntimeError("O ficheiro extraído não contém o executável 'llama-server'.")
+                raise RuntimeError("Extracted archive does not contain the 'llama-server' executable.")
             
             os.chmod(server_bin, 0o755)
             
-            GLib.idle_add(self.on_progress, "Instalação concluída!", 1.0)
+            GLib.idle_add(self.on_progress, "Installation complete!", 1.0)
             GLib.idle_add(self.on_done, self.tag_name, target_dir)
 
         except Exception as e:

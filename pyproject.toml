@@ -10,7 +10,6 @@ readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
     "PyGObject>=3.40.0",
-    "pycairo>=1.20.0",
 ]
 
 [project.scripts]
