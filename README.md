@@ -28,3 +28,17 @@
 ## Prerequisites
 
 You will need Python 3, PyGObject, and Ayatana AppIndicator libraries installed on your system.
+
+## installation
+To install run:
+
+```
+$ ./setup.sh
+```
+    
+To uninstall run:
+
+```
+$ ./setup.sh --uninstall
+```
+    
