@@ -45,20 +45,20 @@ class LlamaConfig:
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, "r") as f:
-                    loaded = json.load(f)
-                    self.data.update(loaded)
+                    self.data.update(json.load(f))
             except Exception as e:
                 print(f"Error loading config: {e}", file=sys.stderr)
 
     def save(self):
         try:
+            os.makedirs(CONFIG_DIR, exist_ok=True)
             with open(CONFIG_FILE, "w") as f:
                 json.dump(self.data, f, indent=4)
         except Exception as e:
             print(f"Error saving config: {e}", file=sys.stderr)
 
-    def get_data(self):
-        return self.data
+    def get(self, key, default=None):
+        return self.data.get(key, default)
 
     def set(self, key, value):
         self.data[key] = value
@@ -80,12 +80,14 @@ class LlamaProcessManager:
 
     def rotate_logs(self):
         try:
-            if os.path.exists(self.log_file_path):
-                if os.path.getsize(self.log_file_path) > 10 * 1024 * 1024:
-                    rotate_path = self.log_file_path + ".1"
-                    if os.path.exists(rotate_path):
-                        os.remove(rotate_path)
-                    os.rename(self.log_file_path, rotate_path)
+            if not os.path.exists(self.log_file_path):
+                return
+                
+            if os.path.getsize(self.log_file_path) > 10 * 1024 * 1024:
+                rotate_path = self.log_file_path + ".1"
+                if os.path.exists(rotate_path):
+                    os.remove(rotate_path)
+                os.rename(self.log_file_path, rotate_path)
         except Exception as e:
             print(f"Error rotating logs: {e}", file=sys.stderr)
 
@@ -93,7 +95,7 @@ class LlamaProcessManager:
         if self.is_running():
             return True, "Server is already running."
 
-        config_data = self.config.get_data()
+        config_data = self.config.data
         version = config_data.get("current_version", "")
         if not version:
             return False, "No active version. Please go to Settings and install a version."
@@ -184,22 +186,35 @@ class LlamaProcessManager:
             return False, f"Error stopping process: {e}"
 
 
-class LogsWindow(Gtk.ApplicationWindow):
-    def __init__(self, gtk_app, logic_app):
-        super().__init__(application=gtk_app, title="llama.cpp Logs")
-        self.logic_app = logic_app
-        
+class LlamaWindow(Gtk.ApplicationWindow):
+    def __init__(self, gtk_app, title, width=700, height=450):
+        super().__init__(application=gtk_app, title=title)
         self.set_icon_name("llama-tray-icon")
-            
-        self.set_default_size(700, 450)
+        self.set_default_size(width, height)
+
+    def create_main_container(self, spacing=10, margin=12):
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=spacing)
+        vbox.set_margin_start(margin)
+        vbox.set_margin_end(margin)
+        vbox.set_margin_top(margin)
+        vbox.set_margin_bottom(margin)
+        self.add(vbox)
+        return vbox
+
+    def add_grid_row(self, grid, label_text, widget, row):
+        label = Gtk.Label(label=label_text, xalign=0)
+        grid.attach(label, 0, row, 1, 1)
+        grid.attach(widget, 1, row, 1, 1)
+        return widget
+
+
+class LogsWindow(LlamaWindow):
+    def __init__(self, gtk_app, logic_app):
+        super().__init__(gtk_app, "llama.cpp Logs", 700, 450)
+        self.logic_app = logic_app
         self.get_style_context().add_class("logs-window")
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        vbox.set_margin_start(12)
-        vbox.set_margin_end(12)
-        vbox.set_margin_top(12)
-        vbox.set_margin_bottom(12)
-        self.add(vbox)
+        vbox = self.create_main_container(spacing=10, margin=12)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_hexpand(True)
@@ -295,14 +310,10 @@ class LogsWindow(Gtk.ApplicationWindow):
         self.logic_app.logs_window = None
 
 
-class SettingsWindow(Gtk.ApplicationWindow):
+class SettingsWindow(LlamaWindow):
     def __init__(self, gtk_app, logic_app):
-        super().__init__(application=gtk_app, title="llama.tray Settings")
+        super().__init__(gtk_app, "llama.tray Settings", 550, 480)
         self.logic_app = logic_app
-        
-        self.set_icon_name("llama-tray-icon")
-            
-        self.set_default_size(550, 480)
         self.set_resizable(False)
 
         self.download_thread = None
@@ -310,12 +321,7 @@ class SettingsWindow(Gtk.ApplicationWindow):
         self.online_releases_loaded = False
         self.fetch_error_msg = ""
 
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=15)
-        vbox.set_margin_start(16)
-        vbox.set_margin_end(16)
-        vbox.set_margin_top(16)
-        vbox.set_margin_bottom(16)
-        self.add(vbox)
+        vbox = self.create_main_container(spacing=15, margin=16)
 
         grid = Gtk.Grid()
         grid.set_column_spacing(12)
@@ -327,16 +333,15 @@ class SettingsWindow(Gtk.ApplicationWindow):
         title_lbl.set_xalign(0.0)
         grid.attach(title_lbl, 0, 0, 2, 1)
 
-        grid.attach(Gtk.Label(label="Acceleration (Backend):", xalign=0), 0, 1, 1, 1)
+        # Backend Row
         self.backend_combo = Gtk.ComboBoxText()
         self.backend_combo.append("vulkan", "Vulkan (GPU)")
         self.backend_combo.append("cpu", "CPU (Standard)")
         self.backend_combo.set_hexpand(True)
         self.backend_combo.connect("changed", self.on_backend_changed)
-        grid.attach(self.backend_combo, 1, 1, 1, 1)
+        self.add_grid_row(grid, "Acceleration (Backend):", self.backend_combo, 1)
 
-        grid.attach(Gtk.Label(label="Version (Release Tag):", xalign=0), 0, 2, 1, 1)
-        
+        # Version Row
         version_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.version_combo = Gtk.ComboBoxText()
         self.version_combo.set_hexpand(True)
@@ -349,19 +354,18 @@ class SettingsWindow(Gtk.ApplicationWindow):
         self.refresh_releases_btn.set_image(refresh_img)
         self.refresh_releases_btn.connect("clicked", lambda w: self.load_releases(force=True))
         version_hbox.pack_start(self.refresh_releases_btn, False, False, 0)
-        
-        grid.attach(version_hbox, 1, 2, 1, 1)
+        self.add_grid_row(grid, "Version (Release Tag):", version_hbox, 2)
 
-        grid.attach(Gtk.Label(label="Environment Variables:\n(Before command)", xalign=0), 0, 3, 1, 1)
+        # Environment Variables Row
         scrolled_env = Gtk.ScrolledWindow()
         scrolled_env.set_shadow_type(Gtk.ShadowType.IN)
         scrolled_env.set_size_request(-1, 80)
         self.env_view = Gtk.TextView()
         self.env_view.set_accepts_tab(False)
         scrolled_env.add(self.env_view)
-        grid.attach(scrolled_env, 1, 3, 1, 1)
+        self.add_grid_row(grid, "Environment Variables:\n(Before command)", scrolled_env, 3)
 
-        grid.attach(Gtk.Label(label="Arguments:\n(After command)", xalign=0), 0, 4, 1, 1)
+        # Arguments Row
         scrolled_args = Gtk.ScrolledWindow()
         scrolled_args.set_shadow_type(Gtk.ShadowType.IN)
         scrolled_args.set_size_request(-1, 80)
@@ -369,7 +373,7 @@ class SettingsWindow(Gtk.ApplicationWindow):
         self.args_view.set_accepts_tab(False)
         self.args_view.set_wrap_mode(Gtk.WrapMode.WORD)
         scrolled_args.add(self.args_view)
-        grid.attach(scrolled_args, 1, 4, 1, 1)
+        self.add_grid_row(grid, "Arguments:\n(After command)", scrolled_args, 4)
 
         self.status_lbl = Gtk.Label(label="", xalign=0)
         vbox.pack_start(self.status_lbl, False, False, 0)
@@ -397,7 +401,7 @@ class SettingsWindow(Gtk.ApplicationWindow):
         self.load_releases(force=False)
 
     def load_fields_from_config(self):
-        config_data = self.logic_app.config.get_data()
+        config_data = self.logic_app.config.data
         backend = config_data.get("backend", "vulkan")
         self.backend_combo.set_active_id(backend)
 
@@ -440,26 +444,9 @@ class SettingsWindow(Gtk.ApplicationWindow):
             
         self.version_combo.remove_all()
         backend = self.backend_combo.get_active_id() or "vulkan"
-        items = []
         
-        online_tags = set()
-        for r in self.releases_list:
-            tag = r.get("tag_name", "")
-            online_tags.add(tag)
-            is_inst = updater.is_version_installed(tag, backend)
-            status_text = " (Installed)" if is_inst else " (Available)"
-            items.append((tag, f"{tag}{status_text}"))
-            
-        installed_folders = updater.get_installed_versions()
-        local_tags_added = set()
-        for folder in installed_folders:
-            tag, f_backend = updater.parse_version_id(folder)
-            if tag not in online_tags and tag not in local_tags_added:
-                local_tags_added.add(tag)
-                is_inst = updater.is_version_installed(tag, backend)
-                status_text = " (Installed)" if is_inst else " (Available - Other Backend)"
-                items.append((tag, f"{tag}{status_text}"))
-                
+        items = updater.get_version_list(self.releases_list, backend)
+        
         if not items:
             self.version_combo.append("none", "No version found")
             self.version_combo.set_active(0)
@@ -473,7 +460,7 @@ class SettingsWindow(Gtk.ApplicationWindow):
             self.version_combo.append(tag, display)
 
         active_index = 0
-        current_version = self.logic_app.config.get_data().get("current_version", "")
+        current_version = self.logic_app.config.data.get("current_version", "")
         tag_to_select = selected_tag if selected_tag and selected_tag not in ("loading", "none") else current_version
         
         if tag_to_select:
@@ -545,22 +532,12 @@ class SettingsWindow(Gtk.ApplicationWindow):
             self.start_download(selected_version, backend)
 
     def start_download(self, tag_name, backend):
-        release_obj = None
-        for r in self.releases_list:
-            if r.get("tag_name") == tag_name:
-                release_obj = r
-                break
-                
-        if not release_obj:
-            self.status_lbl.set_markup("<span color='red'>Error: Could not find metadata to download this version offline.</span>")
+        download_info, err_msg = updater.prepare_download(tag_name, backend, self.releases_list)
+        if not download_info:
+            self.status_lbl.set_markup(f"<span color='red'>{err_msg}</span>")
             return
 
-        asset_info = updater.get_asset_for_backend(release_obj, backend)
-        if not asset_info:
-            self.status_lbl.set_markup(f"<span color='red'>Error: Could not find a compatible binary for '{backend}' in release {tag_name}.</span>")
-            return
-
-        asset_name, download_url, expected_sha256 = asset_info
+        version_id, download_url, expected_sha256 = download_info
 
         self.set_sensitive_inputs(False)
         self.status_lbl.set_text("Starting download...")
@@ -569,7 +546,6 @@ class SettingsWindow(Gtk.ApplicationWindow):
         
         self.logic_app.set_updating_state(True)
 
-        version_id = updater.get_version_id(tag_name, backend)
         self.download_thread = updater.DownloadThread(
             tag_name=tag_name,
             version_id=version_id,
@@ -680,40 +656,30 @@ class LlamaTrayApp(Gtk.Application):
             self.menu.remove(child)
 
         if self.is_updating:
-            start_stop_item = Gtk.MenuItem(label="Updating binaries...")
-            start_stop_item.set_sensitive(False)
+            self._add_menu_item("Updating binaries...", None, False)
         else:
-            if self.process_manager.is_running():
-                start_stop_item = Gtk.MenuItem(label="Stop")
-                start_stop_item.connect("activate", lambda w: self.stop_server())
-            else:
-                start_stop_item = Gtk.MenuItem(label="Start")
-                start_stop_item.connect("activate", lambda w: self.start_server())
-        self.menu.append(start_stop_item)
+            is_running = self.process_manager.is_running()
+            label = "Stop" if is_running else "Start"
+            callback = self.stop_server if is_running else self.start_server
+            self._add_menu_item(label, callback)
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        update_item = Gtk.MenuItem(label="Check for updates")
-        update_item.connect("activate", self.check_updates_from_menu)
-        update_item.set_sensitive(not self.is_updating)
-        self.menu.append(update_item)
-
-        settings_item = Gtk.MenuItem(label="Settings")
-        settings_item.connect("activate", self.open_settings)
-        settings_item.set_sensitive(not self.is_updating)
-        self.menu.append(settings_item)
-
-        logs_item = Gtk.MenuItem(label="Logs")
-        logs_item.connect("activate", self.open_logs)
-        self.menu.append(logs_item)
-
+        self._add_menu_item("Check for updates", self.check_updates_from_menu, not self.is_updating)
+        self._add_menu_item("Settings", self.open_settings, not self.is_updating)
+        self._add_menu_item("Logs", self.open_logs)
+        
         self.menu.append(Gtk.SeparatorMenuItem())
-
-        exit_item = Gtk.MenuItem(label="Quit")
-        exit_item.connect("activate", lambda w: self.quit_app())
-        self.menu.append(exit_item)
-
+        self._add_menu_item("Quit", lambda w: self.quit_app())
         self.menu.show_all()
+
+    def _add_menu_item(self, label, callback, sensitive=True):
+        item = Gtk.MenuItem(label=label)
+        if callback:
+            item.connect("activate", callback)
+        item.set_sensitive(sensitive)
+        self.menu.append(item)
+        return item
 
     def set_updating_state(self, updating):
         self.is_updating = updating
@@ -729,7 +695,7 @@ class LlamaTrayApp(Gtk.Application):
         else:
             self.indicator.set_icon_full("llama-tray-stopped-symbolic", "Server stopped")
 
-    def start_server(self):
+    def start_server(self, widget=None):
         success, msg = self.process_manager.start()
         if success:
             self.show_notification("Llama Server", "Server started successfully!", "success")
@@ -738,7 +704,7 @@ class LlamaTrayApp(Gtk.Application):
         else:
             self.show_notification("Error Starting", msg, "error")
 
-    def stop_server(self):
+    def stop_server(self, widget=None):
         success = self.process_manager.stop()
         if success:
             self.show_notification("Llama Server", "Server stopped.", "info")
@@ -762,7 +728,7 @@ class LlamaTrayApp(Gtk.Application):
                     return
                     
                 latest_tag = releases[0].get("tag_name", "")
-                current_active = self.config.get_data().get("current_version", "")
+                current_active = self.config.data.get("current_version", "")
                 
                 if latest_tag == current_active:
                     GLib.idle_add(self.show_notification, "Llama Tray", f"You are already on the latest version ({latest_tag})!", "info")
