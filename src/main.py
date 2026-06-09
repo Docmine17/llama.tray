@@ -1,23 +1,27 @@
 #!/usr/bin/env python
-import os
-import sys
-import json
-import subprocess
-import shlex
-import threading
-import signal
 import ctypes
+import json
+import os
+import shlex
+import signal
+import subprocess
+import sys
+import threading
+from datetime import datetime
+
 import gi
-gi.require_version('Gtk', '3.0')
+
+gi.require_version("Gtk", "3.0")
 
 try:
-    gi.require_version('AyatanaAppIndicator3', '0.1')
+    gi.require_version("AyatanaAppIndicator3", "0.1")
     from gi.repository import AyatanaAppIndicator3
 except ValueError:
     print("Warning: AyatanaAppIndicator3 not found, trying fallback", file=sys.stderr)
 
-gi.require_version('Notify', '0.7')
-from gi.repository import Gtk, Gdk, GLib, Gio, Notify
+gi.require_version("Notify", "0.7")
+from gi.repository import Gdk, Gio, GLib, Gtk, Notify
+
 import updater
 
 # The directory configurations are now centralized in updater.py
@@ -30,7 +34,7 @@ class LlamaConfig:
             "current_version": "",
             "backend": "vulkan",
             "env_vars": "",
-            "args": "--port 8080 --host 127.0.0.1"
+            "args": "--port 8080 --host 127.0.0.1",
         }
         self.load()
 
@@ -75,7 +79,7 @@ class LlamaProcessManager:
         try:
             if not os.path.exists(self.log_file_path):
                 return
-                
+
             if os.path.getsize(self.log_file_path) > 10 * 1024 * 1024:
                 rotate_path = self.log_file_path + ".1"
                 if os.path.exists(rotate_path):
@@ -91,15 +95,21 @@ class LlamaProcessManager:
         config_data = self.config.data
         version = config_data.get("current_version", "")
         if not version:
-            return False, "No active version. Please go to Settings and install a version."
+            return (
+                False,
+                "No active version. Please go to Settings and install a version.",
+            )
 
         backend = config_data.get("backend", "vulkan")
         version_id = updater.get_version_id(version, backend)
-        
+
         version_dir = os.path.join(updater.INSTALL_DIR, version_id)
         server_bin = os.path.join(version_dir, "llama-server")
         if not os.path.exists(server_bin):
-            return False, f"Executable not found for backend '{backend}' at: {server_bin}"
+            return (
+                False,
+                f"Executable not found for backend '{backend}' at: {server_bin}",
+            )
 
         args_str = config_data.get("args", "")
 
@@ -128,8 +138,14 @@ class LlamaProcessManager:
 
         try:
             log_file = open(self.log_file_path, "a")
+
+            # Add a separator and timestamp for each server start
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_file.write(f"\n{'-' * 60}\nServer started at {timestamp}\n{'-' * 60}\n")
+            log_file.flush()
+
             self.intentional_stop = False
-            
+
             self.process = subprocess.Popen(
                 cmd,
                 cwd=version_dir,
@@ -137,12 +153,12 @@ class LlamaProcessManager:
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 preexec_fn=preexec,
-                start_new_session=True
+                start_new_session=True,
             )
             log_file.close()
-            
+
             threading.Thread(target=self._watch_process, daemon=True).start()
-            
+
             return True, "Server started successfully."
         except Exception as e:
             return False, f"Failed to start process: {e}"
@@ -150,12 +166,12 @@ class LlamaProcessManager:
     def _watch_process(self):
         if not self.process:
             return
-            
+
         try:
             exit_code = self.process.wait()
         except Exception:
             exit_code = -1
-            
+
         if not self.intentional_stop:
             self.process = None
             if self.on_unexpected_exit:
@@ -322,7 +338,9 @@ class SettingsWindow(LlamaWindow):
         vbox.pack_start(grid, True, True, 0)
 
         title_lbl = Gtk.Label()
-        title_lbl.set_markup("<span size='large' weight='bold'>llama.cpp Settings</span>")
+        title_lbl.set_markup(
+            "<span size='large' weight='bold'>llama.cpp Settings</span>"
+        )
         title_lbl.set_xalign(0.0)
         grid.attach(title_lbl, 0, 0, 2, 1)
 
@@ -340,12 +358,16 @@ class SettingsWindow(LlamaWindow):
         self.version_combo.set_hexpand(True)
         self.version_combo.connect("changed", self.on_version_changed)
         version_hbox.pack_start(self.version_combo, True, True, 0)
-        
+
         self.refresh_releases_btn = Gtk.Button()
         self.refresh_releases_btn.set_tooltip_text("Check for updates on GitHub")
-        refresh_img = Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
+        refresh_img = Gtk.Image.new_from_icon_name(
+            "view-refresh-symbolic", Gtk.IconSize.BUTTON
+        )
         self.refresh_releases_btn.set_image(refresh_img)
-        self.refresh_releases_btn.connect("clicked", lambda w: self.load_releases(force=True))
+        self.refresh_releases_btn.connect(
+            "clicked", lambda w: self.load_releases(force=True)
+        )
         version_hbox.pack_start(self.refresh_releases_btn, False, False, 0)
         self.add_grid_row(grid, "Version (Release Tag):", version_hbox, 2)
 
@@ -356,7 +378,9 @@ class SettingsWindow(LlamaWindow):
         self.env_view = Gtk.TextView()
         self.env_view.set_accepts_tab(False)
         scrolled_env.add(self.env_view)
-        self.add_grid_row(grid, "Environment Variables:\n(Before command)", scrolled_env, 3)
+        self.add_grid_row(
+            grid, "Environment Variables:\n(Before command)", scrolled_env, 3
+        )
 
         # Arguments Row
         scrolled_args = Gtk.ScrolledWindow()
@@ -410,7 +434,7 @@ class SettingsWindow(LlamaWindow):
         self.version_combo.remove_all()
         self.version_combo.append("loading", "Fetching releases from GitHub...")
         self.version_combo.set_active(0)
-        
+
         def run_fetch():
             try:
                 releases = updater.get_releases(force_check=force)
@@ -429,17 +453,17 @@ class SettingsWindow(LlamaWindow):
 
     def repopulate_version_combo(self):
         selected_tag = self.version_combo.get_active_id()
-        
+
         try:
             self.version_combo.disconnect_by_func(self.on_version_changed)
         except TypeError:
             pass
-            
+
         self.version_combo.remove_all()
         backend = self.backend_combo.get_active_id() or "vulkan"
-        
+
         items = updater.get_version_list(self.releases_list, backend)
-        
+
         if not items:
             self.version_combo.append("none", "No version found")
             self.version_combo.set_active(0)
@@ -454,23 +478,29 @@ class SettingsWindow(LlamaWindow):
 
         active_index = 0
         current_version = self.logic_app.config.data.get("current_version", "")
-        tag_to_select = selected_tag if selected_tag and selected_tag not in ("loading", "none") else current_version
-        
+        tag_to_select = (
+            selected_tag
+            if selected_tag and selected_tag not in ("loading", "none")
+            else current_version
+        )
+
         if tag_to_select:
             for idx, item in enumerate(items):
                 if item[0] == tag_to_select:
                     active_index = idx
                     break
         self.version_combo.set_active(active_index)
-        
+
         self.version_combo.set_sensitive(True)
         self.refresh_releases_btn.set_sensitive(True)
-        
+
         if not self.online_releases_loaded:
-            self.status_lbl.set_text(f"Offline: showing local versions only. (Error: {self.fetch_error_msg})")
+            self.status_lbl.set_text(
+                f"Offline: showing local versions only. (Error: {self.fetch_error_msg})"
+            )
         else:
             self.status_lbl.set_text("")
-            
+
         self.version_combo.connect("changed", self.on_version_changed)
 
     def on_backend_changed(self, combo):
@@ -486,10 +516,14 @@ class SettingsWindow(LlamaWindow):
     def update_action_button_label(self):
         selected_version = self.get_selected_version()
         backend = self.backend_combo.get_active_id()
-        if not selected_version or selected_version in ("loading", "none") or not backend:
+        if (
+            not selected_version
+            or selected_version in ("loading", "none")
+            or not backend
+        ):
             self.action_btn.set_label("Save and Apply")
             return
-            
+
         is_inst = updater.is_version_installed(selected_version, backend)
         if is_inst:
             self.action_btn.set_label("Save and Apply")
@@ -499,16 +533,22 @@ class SettingsWindow(LlamaWindow):
     def on_action_clicked(self, widget):
         selected_version = self.get_selected_version()
         backend = self.backend_combo.get_active_id()
-        
+
         if not selected_version or selected_version in ("loading", "none"):
-            self.status_lbl.set_markup("<span color='red'>Please select a valid llama.cpp version.</span>")
+            self.status_lbl.set_markup(
+                "<span color='red'>Please select a valid llama.cpp version.</span>"
+            )
             return
 
         env_buf = self.env_view.get_buffer()
-        env_vars = env_buf.get_text(env_buf.get_start_iter(), env_buf.get_end_iter(), True).strip()
+        env_vars = env_buf.get_text(
+            env_buf.get_start_iter(), env_buf.get_end_iter(), True
+        ).strip()
 
         args_buf = self.args_view.get_buffer()
-        args_str = args_buf.get_text(args_buf.get_start_iter(), args_buf.get_end_iter(), True).strip()
+        args_str = args_buf.get_text(
+            args_buf.get_start_iter(), args_buf.get_end_iter(), True
+        ).strip()
 
         self.logic_app.config.set("backend", backend)
         self.logic_app.config.set("env_vars", env_vars)
@@ -516,8 +556,10 @@ class SettingsWindow(LlamaWindow):
 
         if updater.is_version_installed(selected_version, backend):
             self.logic_app.config.set("current_version", selected_version)
-            self.logic_app.show_notification("Configuration Saved", f"Version {selected_version} ({backend}) active.")
-            
+            self.logic_app.show_notification(
+                "Configuration Saved", f"Version {selected_version} ({backend}) active."
+            )
+
             if self.logic_app.process_manager.is_running():
                 self.logic_app.restart_server()
             self.destroy()
@@ -525,7 +567,9 @@ class SettingsWindow(LlamaWindow):
             self.start_download(selected_version, backend)
 
     def start_download(self, tag_name, backend):
-        download_info, err_msg = updater.prepare_download(tag_name, backend, self.releases_list)
+        download_info, err_msg = updater.prepare_download(
+            tag_name, backend, self.releases_list
+        )
         if not download_info:
             self.status_lbl.set_markup(f"<span color='red'>{err_msg}</span>")
             return
@@ -536,7 +580,7 @@ class SettingsWindow(LlamaWindow):
         self.status_lbl.set_text("Starting download...")
         self.progress_bar.set_fraction(0.0)
         self.progress_bar.show()
-        
+
         self.logic_app.set_updating_state(True)
 
         self.download_thread = updater.DownloadThread(
@@ -546,7 +590,7 @@ class SettingsWindow(LlamaWindow):
             expected_sha256=expected_sha256,
             on_progress=self.on_download_progress,
             on_done=self.on_download_done,
-            on_error=self.on_download_error
+            on_error=self.on_download_error,
         )
         self.download_thread.start()
 
@@ -565,25 +609,28 @@ class SettingsWindow(LlamaWindow):
 
     def on_download_done(self, tag_name, target_dir):
         self.logic_app.config.set("current_version", tag_name)
-        
+
         self.logic_app.show_notification(
-            "Download Complete",
-            f"Version {tag_name} installed successfully!"
+            "Download Complete", f"Version {tag_name} installed successfully!"
         )
-        
+
         self.logic_app.set_updating_state(False)
-        
+
         if self.logic_app.process_manager.is_running():
             self.logic_app.restart_server()
-            
+
         self.destroy()
 
     def on_download_error(self, err_msg):
         self.set_sensitive_inputs(True)
         self.progress_bar.hide()
-        self.status_lbl.set_markup(f"<span color='red'>Installation failed: {err_msg}</span>")
+        self.status_lbl.set_markup(
+            f"<span color='red'>Installation failed: {err_msg}</span>"
+        )
         self.logic_app.set_updating_state(False)
-        self.logic_app.show_notification("Installation Error", f"An error occurred: {err_msg}", "error")
+        self.logic_app.show_notification(
+            "Installation Error", f"An error occurred: {err_msg}", "error"
+        )
 
     def on_destroy(self, widget):
         if self.download_thread and self.download_thread.is_alive():
@@ -594,15 +641,16 @@ class SettingsWindow(LlamaWindow):
 
 class LlamaTrayApp(Gtk.Application):
     def __init__(self):
-        super().__init__(application_id="com.github.llamatray", flags=Gio.ApplicationFlags.FLAGS_NONE)
-        
+        super().__init__(
+            application_id="com.github.llamatray", flags=Gio.ApplicationFlags.FLAGS_NONE
+        )
+
         Notify.init("llama-tray")
 
         self.config = LlamaConfig()
-        
+
         self.process_manager = LlamaProcessManager(
-            self.config,
-            on_unexpected_exit=self.on_server_crashed
+            self.config, on_unexpected_exit=self.on_server_crashed
         )
 
         self.settings_window = None
@@ -611,13 +659,13 @@ class LlamaTrayApp(Gtk.Application):
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
-        
+
         self.hold()
-        
+
         self.indicator = AyatanaAppIndicator3.Indicator.new(
             "llama-tray",
             "llama-tray-stopped-symbolic",
-            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS
+            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
         )
         self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
 
@@ -639,9 +687,9 @@ class LlamaTrayApp(Gtk.Application):
         self.update_icon()
         self.update_menu()
         self.show_notification(
-            "Server Stopped Unexpectedly", 
-            f"llama-server exited with error (Code: {exit_code}). Check logs for details.", 
-            "error"
+            "Server Stopped Unexpectedly",
+            f"llama-server exited with error (Code: {exit_code}). Check logs for details.",
+            "error",
         )
 
     def update_menu(self):
@@ -658,10 +706,12 @@ class LlamaTrayApp(Gtk.Application):
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        self._add_menu_item("Check for updates", self.check_updates_from_menu, not self.is_updating)
+        self._add_menu_item(
+            "Check for updates", self.check_updates_from_menu, not self.is_updating
+        )
         self._add_menu_item("Settings", self.open_settings, not self.is_updating)
         self._add_menu_item("Logs", self.open_logs)
-        
+
         self.menu.append(Gtk.SeparatorMenuItem())
         self._add_menu_item("Quit", lambda w: self.quit_app())
         self.menu.show_all()
@@ -677,21 +727,29 @@ class LlamaTrayApp(Gtk.Application):
     def set_updating_state(self, updating):
         self.is_updating = updating
         if updating:
-            self.indicator.set_icon_full("llama-tray-updating-symbolic", "Updating llama.cpp")
+            self.indicator.set_icon_full(
+                "llama-tray-updating-symbolic", "Updating llama.cpp"
+            )
         else:
             self.update_icon()
         self.update_menu()
 
     def update_icon(self):
         if self.process_manager.is_running():
-            self.indicator.set_icon_full("llama-tray-running-symbolic", "Server running")
+            self.indicator.set_icon_full(
+                "llama-tray-running-symbolic", "Server running"
+            )
         else:
-            self.indicator.set_icon_full("llama-tray-stopped-symbolic", "Server stopped")
+            self.indicator.set_icon_full(
+                "llama-tray-stopped-symbolic", "Server stopped"
+            )
 
     def start_server(self, widget=None):
         success, msg = self.process_manager.start()
         if success:
-            self.show_notification("Llama Server", "Server started successfully!", "success")
+            self.show_notification(
+                "Llama Server", "Server started successfully!", "success"
+            )
             self.update_icon()
             self.update_menu()
         else:
@@ -704,7 +762,9 @@ class LlamaTrayApp(Gtk.Application):
             self.update_icon()
             self.update_menu()
         else:
-            self.show_notification("Error Stopping", "Could not terminate the process.", "error")
+            self.show_notification(
+                "Error Stopping", "Could not terminate the process.", "error"
+            )
 
     def restart_server(self):
         self.stop_server()
@@ -712,23 +772,35 @@ class LlamaTrayApp(Gtk.Application):
 
     def check_updates_from_menu(self, widget):
         self.show_notification("Llama Tray", "Checking for updates...", "info")
-        
+
         def run_check():
             try:
                 releases = updater.get_releases(force_check=True)
                 if not releases:
-                    GLib.idle_add(self.show_notification, "Llama Tray", "No release found on GitHub.", "info")
+                    GLib.idle_add(
+                        self.show_notification,
+                        "Llama Tray",
+                        "No release found on GitHub.",
+                        "info",
+                    )
                     return
-                    
+
                 latest_tag = releases[0].get("tag_name", "")
                 current_active = self.config.data.get("current_version", "")
-                
+
                 if latest_tag == current_active:
-                    GLib.idle_add(self.show_notification, "Llama Tray", f"You are already on the latest version ({latest_tag})!", "info")
+                    GLib.idle_add(
+                        self.show_notification,
+                        "Llama Tray",
+                        f"You are already on the latest version ({latest_tag})!",
+                        "info",
+                    )
                 else:
                     GLib.idle_add(self.notify_new_version, latest_tag)
             except Exception as e:
-                GLib.idle_add(self.show_notification, "Error Checking Updates", str(e), "error")
+                GLib.idle_add(
+                    self.show_notification, "Error Checking Updates", str(e), "error"
+                )
 
         threading.Thread(target=run_check, daemon=True).start()
 
@@ -736,9 +808,9 @@ class LlamaTrayApp(Gtk.Application):
         self.show_notification(
             "New Version Available!",
             f"Version {latest_tag} is available. Open Settings to update.",
-            "info"
+            "info",
         )
-        
+
         GLib.idle_add(self.open_settings, None)
 
     def open_settings(self, widget):
@@ -769,9 +841,10 @@ def main():
     GLib.set_application_name("Llama Tray")
 
     app = LlamaTrayApp()
-    
+
     def on_sigint(signum, frame):
         app.quit_app()
+
     signal.signal(signal.SIGINT, on_sigint)
 
     sys.exit(app.run(sys.argv))
