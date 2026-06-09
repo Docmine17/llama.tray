@@ -20,15 +20,8 @@ gi.require_version('Notify', '0.7')
 from gi.repository import Gtk, Gdk, GLib, Gio, Notify
 import updater
 
-# Directory configurations
-INSTALL_DIR = os.path.expanduser("~/.local/share/llama-tray/bin")
-CONFIG_DIR = os.path.expanduser("~/.config/llama-tray")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-LOG_DIR = os.path.expanduser("~/.local/share/llama-tray")
-
-os.makedirs(INSTALL_DIR, exist_ok=True)
-os.makedirs(CONFIG_DIR, exist_ok=True)
-os.makedirs(LOG_DIR, exist_ok=True)
+# The directory configurations are now centralized in updater.py
+# to ensure consistency between the updater and the main app.
 
 
 class LlamaConfig:
@@ -42,17 +35,17 @@ class LlamaConfig:
         self.load()
 
     def load(self):
-        if os.path.exists(CONFIG_FILE):
+        if os.path.exists(updater.CONFIG_FILE):
             try:
-                with open(CONFIG_FILE, "r") as f:
+                with open(updater.CONFIG_FILE, "r") as f:
                     self.data.update(json.load(f))
             except Exception as e:
                 print(f"Error loading config: {e}", file=sys.stderr)
 
     def save(self):
         try:
-            os.makedirs(CONFIG_DIR, exist_ok=True)
-            with open(CONFIG_FILE, "w") as f:
+            os.makedirs(updater.CONFIG_DIR, exist_ok=True)
+            with open(updater.CONFIG_FILE, "w") as f:
                 json.dump(self.data, f, indent=4)
         except Exception as e:
             print(f"Error saving config: {e}", file=sys.stderr)
@@ -69,7 +62,7 @@ class LlamaProcessManager:
     def __init__(self, config, on_unexpected_exit=None):
         self.config = config
         self.process = None
-        self.log_file_path = os.path.join(LOG_DIR, "llama.log")
+        self.log_file_path = os.path.join(updater.LOG_DIR, "llama.log")
         self.on_unexpected_exit = on_unexpected_exit
         self.intentional_stop = False
 
@@ -103,7 +96,7 @@ class LlamaProcessManager:
         backend = config_data.get("backend", "vulkan")
         version_id = updater.get_version_id(version, backend)
         
-        version_dir = os.path.join(INSTALL_DIR, version_id)
+        version_dir = os.path.join(updater.INSTALL_DIR, version_id)
         server_bin = os.path.join(version_dir, "llama-server")
         if not os.path.exists(server_bin):
             return False, f"Executable not found for backend '{backend}' at: {server_bin}"

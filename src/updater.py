@@ -15,11 +15,16 @@ from gi.repository import GLib
 # Directory setup
 CACHE_DIR = Path("~/.cache/llama-tray").expanduser()
 INSTALL_DIR = Path("~/.local/share/llama-tray/bin").expanduser()
+CONFIG_DIR = Path("~/.config/llama-tray").expanduser()
+LOG_DIR = Path("~/.local/share/llama-tray").expanduser()
 CACHE_FILE = CACHE_DIR / "releases_cache.json"
+CONFIG_FILE = CONFIG_DIR / "config.json"
 CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_system_arch():
     """
@@ -192,7 +197,7 @@ class DownloadThread(threading.Thread):
 
     def run(self):
         temp_file = None
-        target_dir = os.path.join(INSTALL_DIR, self.version_id)
+        target_dir = INSTALL_DIR / self.version_id
         
         try:
             req = urllib.request.Request(
@@ -205,7 +210,8 @@ class DownloadThread(threading.Thread):
                 downloaded = 0
                 block_size = 8192
                 
-                fd, temp_file_path = tempfile.mkstemp(dir=CACHE_DIR, suffix=".tar.gz")
+                fd, temp_file_path_str = tempfile.mkstemp(dir=str(CACHE_DIR), suffix=".tar.gz")
+                temp_file_path = Path(temp_file_path_str)
                 temp_file = os.fdopen(fd, "wb")
                 
                 sha256_hash = hashlib.sha256()
@@ -225,26 +231,25 @@ class DownloadThread(threading.Thread):
                 temp_file.close()
                 
                 if self._stop_event.is_set():
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
+                    if temp_file_path.exists():
+                        temp_file_path.unlink()
                     return
                 
                 calculated_sha = sha256_hash.hexdigest()
                 if self.expected_sha256 and calculated_sha != self.expected_sha256:
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
+                    if temp_file_path.exists():
+                        temp_file_path.unlink()
                     raise ValueError(
-                        f"Integrity check failed (Incorrect SHA256).\\n"
-                        f"Expected: {self.expected_sha256}\\n"
+                        f"Integrity check failed (Incorrect SHA256).\n"
+                        f"Expected: {self.expected_sha256}\n"
                         f"Calculated: {calculated_sha}"
                     )
 
             GLib.idle_add(self.on_progress, "Extracting binaries...", 0.99)
             
-            if os.path.exists(target_dir):
-                import shutil
+            if target_dir.exists():
                 shutil.rmtree(target_dir)
-            os.makedirs(target_dir, exist_ok=True)
+            target_dir.mkdir(parents=True, exist_ok=True)
             
             try:
                 with tarfile.open(temp_file_path, "r:gz") as tar:
@@ -261,29 +266,27 @@ class DownloadThread(threading.Thread):
                             if member.name.startswith(strip_prefix):
                                 member.name = member.name[len(strip_prefix):]
                                 if member.name: 
-                                    tar.extract(member, path=target_dir)
+                                    tar.extract(member, path=str(target_dir))
                     else:
-                        tar.extractall(path=target_dir)
+                        tar.extractall(path=str(target_dir))
             except Exception as e:
-                if os.path.exists(target_dir):
-                    import shutil
+                if target_dir.exists():
                     shutil.rmtree(target_dir)
                 raise RuntimeError(f"Failed to extract archive: {e}")
             finally:
-                if os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
+                if temp_file_path.exists():
+                    temp_file_path.unlink()
 
-            server_bin = os.path.join(target_dir, "llama-server")
-            if not os.path.exists(server_bin):
+            server_bin = target_dir / "llama-server"
+            if not server_bin.exists():
                 raise RuntimeError("Extracted archive does not contain the 'llama-server' executable.")
             
-            os.chmod(server_bin, 0o755)
+            server_bin.chmod(0o755)
             
             GLib.idle_add(self.on_progress, "Installation complete!", 1.0)
-            GLib.idle_add(self.on_done, self.tag_name, target_dir)
+            GLib.idle_add(self.on_done, self.tag_name, str(target_dir))
 
         except Exception as e:
-            if os.path.exists(target_dir):
-                import shutil
+            if target_dir.exists():
                 shutil.rmtree(target_dir)
             GLib.idle_add(self.on_error, str(e))
