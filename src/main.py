@@ -247,7 +247,7 @@ class LogsWindow(LlamaWindow):
         self.text_view.set_editable(False)
         self.text_view.set_cursor_visible(False)
         self.text_view.set_monospace(True)
-        self.text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.text_view.set_wrap_mode(Gtk.WrapMode.NONE)
         scrolled.add(self.text_view)
 
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
