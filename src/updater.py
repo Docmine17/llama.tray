@@ -1,15 +1,16 @@
-import os
-import json
-import time
-import urllib.request
-import urllib.error
 import hashlib
+import json
+import os
+import platform
+import shutil
 import tarfile
 import tempfile
 import threading
-import shutil
-import platform
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
+
 from gi.repository import GLib
 
 # Directory setup
@@ -21,14 +22,18 @@ CACHE_FILE = CACHE_DIR / "releases_cache.json"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 
+BIN_LINK_DIR = Path("~/.local/bin").expanduser()
+BINARIES_TO_LINK = ["llama-server", "llama-cli"]
+
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 INSTALL_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+
 def get_system_arch():
     """
-    Detects the system architecture and maps it to the naming convention 
+    Detects the system architecture and maps it to the naming convention
     used by llama.cpp releases (x64 or arm64).
     """
     arch = platform.machine().lower()
@@ -37,6 +42,7 @@ def get_system_arch():
     if arch in ("aarch64", "arm64"):
         return "arm64"
     return "x64"  # Fallback to x64
+
 
 def get_version_id(tag_name, backend):
     """Generates a unique folder identifier based on the tag and backend."""
@@ -53,7 +59,7 @@ def parse_version_id(folder_name):
 def get_releases(force_check=False):
     """Fetches releases from GitHub API with a 1-hour cache."""
     now = time.time()
-    
+
     if not force_check and CACHE_FILE.exists():
         try:
             with open(CACHE_FILE, "r") as f:
@@ -65,17 +71,17 @@ def get_releases(force_check=False):
 
     url = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
     req = urllib.request.Request(url, headers={"User-Agent": "llama.tray-updater"})
-    
+
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             releases = json.loads(response.read().decode())
-            
+
         try:
             with open(CACHE_FILE, "w") as f:
                 json.dump({"timestamp": now, "releases": releases}, f)
         except IOError:
             pass
-            
+
         return releases
     except urllib.error.URLError as e:
         raise RuntimeError(f"Connection error while fetching updates: {e.reason}")
@@ -87,26 +93,26 @@ def get_asset_for_backend(release, backend):
     """Finds the correct asset in the release based on the specified backend."""
     assets = release.get("assets", [])
     system_arch = get_system_arch()
-    
+
     for asset in assets:
         name = asset.get("name", "")
         if not (name.startswith("llama-") and name.endswith(".tar.gz")):
             continue
-        
+
         if backend == "vulkan":
             # Must contain 'vulkan' and match the actual system architecture
             if "vulkan" in name and f"{system_arch}.tar.gz" in name:
                 digest = asset.get("digest", "")
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
                 return name, asset.get("browser_download_url"), sha256
-        else: 
+        else:
             # CPU backend: Must match 'bin-ubuntu-<arch>.tar.gz'
             # This avoids picking up any other specialized backends (ROCm, OpenVINO, CUDA, etc.)
             if name.endswith(f"bin-ubuntu-{system_arch}.tar.gz"):
                 digest = asset.get("digest", "")
                 sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
                 return name, asset.get("browser_download_url"), sha256
-                
+
     return None
 
 
@@ -131,23 +137,25 @@ def get_installed_versions():
         pass
     return sorted(versions, reverse=True)
 
+
 def get_version_list(releases_list, backend):
     """
-    Processes releases and installed versions to return a list of 
+    Processes releases and installed versions to return a list of
     (tag, display_text) for the UI combo box.
     """
     items = []
     online_tags = set()
-    
+
     # Process remote releases
     for r in releases_list:
         tag = r.get("tag_name", "")
-        if not tag: continue
+        if not tag:
+            continue
         online_tags.add(tag)
         is_inst = is_version_installed(tag, backend)
         status_text = " (Installed)" if is_inst else " (Available)"
         items.append((tag, f"{tag}{status_text}"))
-        
+
     # Process local versions not found in remote list
     installed_folders = get_installed_versions()
     local_tags_added = set()
@@ -158,30 +166,89 @@ def get_version_list(releases_list, backend):
             is_inst = is_version_installed(tag, backend)
             status_text = " (Installed)" if is_inst else " (Available - Other Backend)"
             items.append((tag, f"{tag}{status_text}"))
-            
+
     return items
+
+
+def manage_symlinks(version_id, enabled):
+    """
+    Creates or removes symlinks for llama binaries in ~/.local/bin.
+    """
+    try:
+        if not enabled:
+            # Remove existing links if integration is disabled
+            for bin_name in BINARIES_TO_LINK:
+                link_path = BIN_LINK_DIR / bin_name
+                if link_path.is_symlink() or link_path.exists():
+                    link_path.unlink()
+            return True
+
+        if not version_id:
+            return False
+
+        # Ensure ~/.local/bin exists
+        BIN_LINK_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Target directory for the binaries
+        target_dir = INSTALL_DIR / version_id
+        if not target_dir.exists():
+            return False
+
+        for bin_name in BINARIES_TO_LINK:
+            bin_path = target_dir / bin_name
+            if not bin_path.exists():
+                continue
+
+            link_path = BIN_LINK_DIR / bin_name
+
+            # Remove old link/file if it exists
+            if link_path.is_symlink() or link_path.exists():
+                link_path.unlink()
+
+            # Create new symlink
+            link_path.symlink_to(bin_path)
+
+        return True
+    except Exception as e:
+        print(f"Error managing symlinks: {e}")
+        return False
+
 
 def prepare_download(tag_name, backend, releases_list):
     """
     Resolves the necessary metadata for a download.
     Returns ((version_id, download_url, expected_sha256), error_msg) or (None, error_msg).
     """
-    release_obj = next((r for r in releases_list if r.get("tag_name") == tag_name), None)
+    release_obj = next(
+        (r for r in releases_list if r.get("tag_name") == tag_name), None
+    )
     if not release_obj:
         return None, "Could not find metadata for this version."
 
     asset_info = get_asset_for_backend(release_obj, backend)
     if not asset_info:
-        return None, f"Could not find a compatible binary for '{backend}' in release {tag_name}."
+        return (
+            None,
+            f"Could not find a compatible binary for '{backend}' in release {tag_name}.",
+        )
 
     asset_name, download_url, expected_sha256 = asset_info
     version_id = get_version_id(tag_name, backend)
-    
+
     return (version_id, download_url, expected_sha256), None
 
 
 class DownloadThread(threading.Thread):
-    def __init__(self, tag_name, version_id, download_url, expected_sha256, on_progress, on_done, on_error):
+    def __init__(
+        self,
+        tag_name,
+        version_id,
+        download_url,
+        expected_sha256,
+        on_progress,
+        on_done,
+        on_error,
+    ):
         super().__init__()
         self.tag_name = tag_name
         self.version_id = version_id
@@ -198,24 +265,25 @@ class DownloadThread(threading.Thread):
     def run(self):
         temp_file = None
         target_dir = INSTALL_DIR / self.version_id
-        
+
         try:
             req = urllib.request.Request(
-                self.download_url,
-                headers={"User-Agent": "llama.tray-updater"}
+                self.download_url, headers={"User-Agent": "llama.tray-updater"}
             )
-            
+
             with urllib.request.urlopen(req, timeout=15) as response:
-                total_size = int(response.headers.get('content-length', 0))
+                total_size = int(response.headers.get("content-length", 0))
                 downloaded = 0
                 block_size = 8192
-                
-                fd, temp_file_path_str = tempfile.mkstemp(dir=str(CACHE_DIR), suffix=".tar.gz")
+
+                fd, temp_file_path_str = tempfile.mkstemp(
+                    dir=str(CACHE_DIR), suffix=".tar.gz"
+                )
                 temp_file_path = Path(temp_file_path_str)
                 temp_file = os.fdopen(fd, "wb")
-                
+
                 sha256_hash = hashlib.sha256()
-                
+
                 while not self._stop_event.is_set():
                     block = response.read(block_size)
                     if not block:
@@ -223,18 +291,22 @@ class DownloadThread(threading.Thread):
                     temp_file.write(block)
                     sha256_hash.update(block)
                     downloaded += len(block)
-                    
+
                     if total_size > 0 and self.on_progress:
                         percent = int((downloaded / total_size) * 100)
-                        GLib.idle_add(self.on_progress, f"Downloading: {percent}%", percent / 100.0)
+                        GLib.idle_add(
+                            self.on_progress,
+                            f"Downloading: {percent}%",
+                            percent / 100.0,
+                        )
 
                 temp_file.close()
-                
+
                 if self._stop_event.is_set():
                     if temp_file_path.exists():
                         temp_file_path.unlink()
                     return
-                
+
                 calculated_sha = sha256_hash.hexdigest()
                 if self.expected_sha256 and calculated_sha != self.expected_sha256:
                     if temp_file_path.exists():
@@ -246,11 +318,11 @@ class DownloadThread(threading.Thread):
                     )
 
             GLib.idle_add(self.on_progress, "Extracting binaries...", 0.99)
-            
+
             if target_dir.exists():
                 shutil.rmtree(target_dir)
             target_dir.mkdir(parents=True, exist_ok=True)
-            
+
             try:
                 with tarfile.open(temp_file_path, "r:gz") as tar:
                     members = tar.getmembers()
@@ -259,13 +331,13 @@ class DownloadThread(threading.Thread):
                         parts = m.name.split("/")
                         if len(parts) > 1:
                             top_dirs.add(parts[0])
-                    
+
                     if len(top_dirs) == 1:
                         strip_prefix = top_dirs.pop() + "/"
                         for member in members:
                             if member.name.startswith(strip_prefix):
-                                member.name = member.name[len(strip_prefix):]
-                                if member.name: 
+                                member.name = member.name[len(strip_prefix) :]
+                                if member.name:
                                     tar.extract(member, path=str(target_dir))
                     else:
                         tar.extractall(path=str(target_dir))
@@ -279,10 +351,12 @@ class DownloadThread(threading.Thread):
 
             server_bin = target_dir / "llama-server"
             if not server_bin.exists():
-                raise RuntimeError("Extracted archive does not contain the 'llama-server' executable.")
-            
+                raise RuntimeError(
+                    "Extracted archive does not contain the 'llama-server' executable."
+                )
+
             server_bin.chmod(0o755)
-            
+
             GLib.idle_add(self.on_progress, "Installation complete!", 1.0)
             GLib.idle_add(self.on_done, self.tag_name, str(target_dir))
 

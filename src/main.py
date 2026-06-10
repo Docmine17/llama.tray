@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import ctypes
 import json
+import logging
 import os
 import shlex
 import signal
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import threading
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 
 import gi
 
@@ -30,12 +32,14 @@ import updater
 
 class LlamaConfig:
     def __init__(self):
-        self.data = {
+        self.defaults = {
             "current_version": "",
             "backend": "vulkan",
             "env_vars": "",
             "args": "--port 8080 --host 127.0.0.1",
+            "terminal_integration": False,
         }
+        self.data = self.defaults.copy()
         self.load()
 
     def load(self):
@@ -62,11 +66,30 @@ class LlamaConfig:
         self.save()
 
 
+def setup_logger(log_path):
+    logger = logging.getLogger("llama_server")
+    logger.setLevel(logging.INFO)
+
+    if not logger.handlers:
+        # Create a rotating file handler: 10MB max size, keep 1 backup
+        handler = RotatingFileHandler(
+            log_path, maxBytes=10 * 1024 * 1024, backupCount=1, encoding="utf-8"
+        )
+        formatter = logging.Formatter(
+            "%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+    return logger
+
+
 class LlamaProcessManager:
     def __init__(self, config, on_unexpected_exit=None):
         self.config = config
         self.process = None
         self.log_file_path = os.path.join(updater.LOG_DIR, "llama.log")
+        self.logger = setup_logger(self.log_file_path)
         self.on_unexpected_exit = on_unexpected_exit
         self.intentional_stop = False
 
@@ -74,19 +97,6 @@ class LlamaProcessManager:
         if self.process is None:
             return False
         return self.process.poll() is None
-
-    def rotate_logs(self):
-        try:
-            if not os.path.exists(self.log_file_path):
-                return
-
-            if os.path.getsize(self.log_file_path) > 10 * 1024 * 1024:
-                rotate_path = self.log_file_path + ".1"
-                if os.path.exists(rotate_path):
-                    os.remove(rotate_path)
-                os.rename(self.log_file_path, rotate_path)
-        except Exception as e:
-            print(f"Error rotating logs: {e}", file=sys.stderr)
 
     def start(self):
         if self.is_running():
@@ -113,8 +123,6 @@ class LlamaProcessManager:
 
         args_str = config_data.get("args", "")
 
-        self.rotate_logs()
-
         env = os.environ.copy()
         env_vars_str = config_data.get("env_vars", "")
         for line in env_vars_str.splitlines():
@@ -137,25 +145,24 @@ class LlamaProcessManager:
                 pass
 
         try:
-            log_file = open(self.log_file_path, "a")
-
-            # Add a separator and timestamp for each server start
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_file.write(f"\n{'-' * 60}\nServer started at {timestamp}\n{'-' * 60}\n")
-            log_file.flush()
-
             self.intentional_stop = False
 
+            # Start process with pipes for stdout/stderr
             self.process = subprocess.Popen(
                 cmd,
                 cwd=version_dir,
                 env=env,
-                stdout=log_file,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 preexec_fn=preexec,
                 start_new_session=True,
+                text=True,
+                bufsize=1,
             )
-            log_file.close()
+
+            self.logger.info("-" * 60)
+            self.logger.info("Server started")
+            self.logger.info("-" * 60)
 
             threading.Thread(target=self._watch_process, daemon=True).start()
 
@@ -168,6 +175,11 @@ class LlamaProcessManager:
             return
 
         try:
+            # Read stdout line by line as it comes
+            for line in iter(self.process.stdout.readline, ""):
+                if line:
+                    self.logger.info(line.strip())
+
             exit_code = self.process.wait()
         except Exception:
             exit_code = -1
@@ -335,6 +347,7 @@ class SettingsWindow(LlamaWindow):
         grid = Gtk.Grid()
         grid.set_column_spacing(12)
         grid.set_row_spacing(12)
+
         vbox.pack_start(grid, True, True, 0)
 
         title_lbl = Gtk.Label()
@@ -392,6 +405,15 @@ class SettingsWindow(LlamaWindow):
         scrolled_args.add(self.args_view)
         self.add_grid_row(grid, "Arguments:\n(After command)", scrolled_args, 4)
 
+        # Terminal Integration Row
+        term_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.term_check = Gtk.CheckButton()
+        self.term_check.set_tooltip_text(
+            "Add llama-server and llama-cli to ~/.local/bin"
+        )
+        term_hbox.pack_start(self.term_check, False, False, 0)
+        self.add_grid_row(grid, "Terminal Integration:", term_hbox, 5)
+
         self.status_lbl = Gtk.Label(label="", xalign=0)
         vbox.pack_start(self.status_lbl, False, False, 0)
         self.progress_bar = Gtk.ProgressBar()
@@ -427,6 +449,8 @@ class SettingsWindow(LlamaWindow):
 
         args_buffer = self.args_view.get_buffer()
         args_buffer.set_text(config_data.get("args", ""))
+
+        self.term_check.set_active(config_data.get("terminal_integration", False))
 
     def load_releases(self, force=False):
         self.version_combo.set_sensitive(False)
@@ -553,6 +577,11 @@ class SettingsWindow(LlamaWindow):
         self.logic_app.config.set("backend", backend)
         self.logic_app.config.set("env_vars", env_vars)
         self.logic_app.config.set("args", args_str)
+        self.logic_app.config.set("terminal_integration", self.term_check.get_active())
+
+        # Update terminal symlinks based on new configuration
+        version_id = updater.get_version_id(selected_version, backend)
+        updater.manage_symlinks(version_id, self.term_check.get_active())
 
         if updater.is_version_installed(selected_version, backend):
             self.logic_app.config.set("current_version", selected_version)
@@ -610,6 +639,12 @@ class SettingsWindow(LlamaWindow):
     def on_download_done(self, tag_name, target_dir):
         self.logic_app.config.set("current_version", tag_name)
 
+        # Update terminal symlinks for the new version if enabled
+        backend = self.backend_combo.get_active_id() or "vulkan"
+        version_id = updater.get_version_id(tag_name, backend)
+        integration_enabled = self.logic_app.config.get("terminal_integration", False)
+        updater.manage_symlinks(version_id, integration_enabled)
+
         self.logic_app.show_notification(
             "Download Complete", f"Version {tag_name} installed successfully!"
         )
@@ -640,11 +675,11 @@ class SettingsWindow(LlamaWindow):
 
 
 class LlamaTrayApp(Gtk.Application):
-    def __init__(self):
+    def __init__(self, autostart=False):
         super().__init__(
             application_id="com.github.llamatray", flags=Gio.ApplicationFlags.FLAGS_NONE
         )
-
+        self.autostart_server = autostart
         Notify.init("llama-tray")
 
         self.config = LlamaConfig()
@@ -660,6 +695,18 @@ class LlamaTrayApp(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
 
+        # Sync terminal symlinks on startup
+        current_version = self.config.get("current_version")
+        backend = self.config.get("backend", "vulkan")
+        integration_enabled = self.config.get("terminal_integration", False)
+
+        if current_version:
+            version_id = updater.get_version_id(current_version, backend)
+            updater.manage_symlinks(version_id, integration_enabled)
+        else:
+            # Ensure no stray links if no version is active
+            updater.manage_symlinks(None, integration_enabled)
+
         self.hold()
 
         self.indicator = AyatanaAppIndicator3.Indicator.new(
@@ -674,7 +721,10 @@ class LlamaTrayApp(Gtk.Application):
         self.update_menu()
 
     def do_activate(self):
-        pass
+        if self.autostart_server:
+            # Use GLib.idle_add to ensure the app is fully initialized
+            # before starting the server
+            GLib.idle_add(self.start_server)
 
     def show_notification(self, title, message, icon_type="info"):
         try:
@@ -836,18 +886,49 @@ class LlamaTrayApp(Gtk.Application):
         self.quit()
 
 
+def print_help():
+    help_text = """
+Llama.tray - System Tray Manager for llama.cpp
+
+Usage:
+  llama-tray [options]
+
+Options:
+  --autostart    Start the llama-server automatically on launch.
+  --help, -h     Show this help message and exit.
+
+Example:
+  llama-tray --autostart
+    """
+    print(help_text)
+
+
 def main():
     GLib.set_prgname("llama-tray")
     GLib.set_application_name("Llama Tray")
 
-    app = LlamaTrayApp()
+    valid_args = {"--autostart", "--help", "-h"}
+    autostart = False
+
+    # Process arguments
+    for arg in sys.argv[1:]:
+        if arg in ("--help", "-h"):
+            print_help()
+            sys.exit(0)
+        elif arg == "--autostart":
+            autostart = True
+        elif arg not in valid_args:
+            print(f"Error: Invalid argument '{arg}'")
+            print_help()
+            sys.exit(1)
+
+    app = LlamaTrayApp(autostart=autostart)
 
     def on_sigint(signum, frame):
         app.quit_app()
 
     signal.signal(signal.SIGINT, on_sigint)
-
-    sys.exit(app.run(sys.argv))
+    sys.exit(app.run())
 
 
 if __name__ == "__main__":
