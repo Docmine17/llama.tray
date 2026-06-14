@@ -10,11 +10,11 @@ ICONS_DIR="$HOME/.local/share/icons/hicolor"
 # Uninstall function
 uninstall() {
     echo "Removing Llama Tray..."
-    
+
     rm -f "$BIN_DIR/llama-tray"
     rm -rf "$SRC_DIR"
     rm -f "$APPS_DIR/llama-tray.desktop"
-    
+
     # Remove icons matching the application name
     find "$ICONS_DIR" -name "llama-tray*.svg" -type f -delete
 
@@ -59,7 +59,7 @@ cp data/icons/hicolor/scalable/status/*.svg "$ICONS_DIR/scalable/status/"
 cat << EOF > "$BIN_DIR/llama-tray"
 #!/usr/bin/env bash
 # Wrapper script to start Llama Tray
-exec python3 "$SRC_DIR/main.py" "\$@"
+exec python "$SRC_DIR/main.py" "\$@"
 EOF
 
 # 5. Set execution permissions
