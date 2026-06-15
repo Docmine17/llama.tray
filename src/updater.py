@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Callable, Optional
 
 from gi.repository import GLib
 
@@ -25,13 +26,15 @@ CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 BIN_LINK_DIR = Path("~/.local/bin").expanduser()
 BINARIES_TO_LINK = ["llama-server", "llama-cli"]
 
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+def ensure_dirs() -> None:
+    """Creates all required application directories. Called once at startup."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_system_arch():
+def get_system_arch() -> str:
     """
     Detects the system architecture and maps it to the naming convention
     used by llama.cpp releases (x64 or arm64).
@@ -44,19 +47,19 @@ def get_system_arch():
     return "x64"  # Fallback to x64
 
 
-def get_version_id(tag_name, backend):
+def get_version_id(tag_name: str, backend: str) -> str:
     """Generates a unique folder identifier based on the tag and backend."""
     return tag_name if backend == "cpu" else f"{tag_name}-{backend}"
 
 
-def parse_version_id(folder_name):
+def parse_version_id(folder_name: str) -> tuple[str, str]:
     """Inverse of get_version_id. Extracts the base tag and the backend."""
     if folder_name.endswith("-vulkan"):
         return folder_name[:-7], "vulkan"
     return folder_name, "cpu"
 
 
-def get_releases(force_check=False):
+def get_releases(force_check: bool = False) -> list[dict]:
     """Fetches releases from GitHub API with a 1-hour cache."""
     now = time.time()
 
@@ -89,7 +92,7 @@ def get_releases(force_check=False):
         raise RuntimeError(f"Error processing updates: {e}")
 
 
-def get_asset_for_backend(release, backend):
+def get_asset_for_backend(release: dict, backend: str) -> Optional[tuple[str, str, Optional[str]]]:
     """Finds the correct asset in the release based on the specified backend."""
     assets = release.get("assets", [])
     system_arch = get_system_arch()
@@ -116,14 +119,14 @@ def get_asset_for_backend(release, backend):
     return None
 
 
-def is_version_installed(tag_name, backend):
+def is_version_installed(tag_name: str, backend: str) -> bool:
     """Checks if a release version combined with its backend is already extracted."""
     version_id = get_version_id(tag_name, backend)
     server_bin = INSTALL_DIR / version_id / "llama-server"
     return server_bin.exists() and server_bin.is_file()
 
 
-def get_installed_versions():
+def get_installed_versions() -> list[str]:
     """Returns a list of folder names that are currently installed/extracted."""
     if not INSTALL_DIR.exists():
         return []
@@ -138,7 +141,7 @@ def get_installed_versions():
     return sorted(versions, reverse=True)
 
 
-def get_version_list(releases_list, backend):
+def get_version_list(releases_list: list[dict], backend: str) -> list[tuple[str, str]]:
     """
     Processes releases and installed versions to return a list of
     (tag, display_text) for the UI combo box.
@@ -170,7 +173,7 @@ def get_version_list(releases_list, backend):
     return items
 
 
-def manage_symlinks(version_id, enabled):
+def manage_symlinks(version_id: Optional[str], enabled: bool) -> bool:
     """
     Creates or removes symlinks for llama binaries in ~/.local/bin.
     """
@@ -214,7 +217,7 @@ def manage_symlinks(version_id, enabled):
         return False
 
 
-def prepare_download(tag_name, backend, releases_list):
+def prepare_download(tag_name: str, backend: str, releases_list: list[dict]) -> tuple[Optional[tuple[str, str, Optional[str]]], str]:
     """
     Resolves the necessary metadata for a download.
     Returns ((version_id, download_url, expected_sha256), error_msg) or (None, error_msg).
@@ -264,6 +267,7 @@ class DownloadThread(threading.Thread):
 
     def run(self):
         temp_file = None
+        temp_file_path = None
         target_dir = INSTALL_DIR / self.version_id
 
         try:
@@ -271,7 +275,8 @@ class DownloadThread(threading.Thread):
                 self.download_url, headers={"User-Agent": "llama.tray-updater"}
             )
 
-            with urllib.request.urlopen(req, timeout=15) as response:
+            # Set a socket-level read timeout so stalled transfers don't hang forever
+            with urllib.request.urlopen(req, timeout=30) as response:
                 total_size = int(response.headers.get("content-length", 0))
                 downloaded = 0
                 block_size = 8192
@@ -280,27 +285,40 @@ class DownloadThread(threading.Thread):
                     dir=str(CACHE_DIR), suffix=".tar.gz"
                 )
                 temp_file_path = Path(temp_file_path_str)
-                temp_file = os.fdopen(fd, "wb")
 
                 sha256_hash = hashlib.sha256()
 
-                while not self._stop_event.is_set():
-                    block = response.read(block_size)
-                    if not block:
-                        break
-                    temp_file.write(block)
-                    sha256_hash.update(block)
-                    downloaded += len(block)
+                # Use try/finally to guarantee the fd is closed even on exceptions
+                try:
+                    temp_file = os.fdopen(fd, "wb")
+                    # Apply a per-read socket timeout to prevent hanging on stalled data
+                    response.fp.raw._sock.settimeout(30)
+                except Exception:
+                    # If fdopen or settimeout fail, close the raw fd and re-raise
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+                    raise
 
-                    if total_size > 0 and self.on_progress:
-                        percent = int((downloaded / total_size) * 100)
-                        GLib.idle_add(
-                            self.on_progress,
-                            f"Downloading: {percent}%",
-                            percent / 100.0,
-                        )
+                try:
+                    while not self._stop_event.is_set():
+                        block = response.read(block_size)
+                        if not block:
+                            break
+                        temp_file.write(block)
+                        sha256_hash.update(block)
+                        downloaded += len(block)
 
-                temp_file.close()
+                        if total_size > 0 and self.on_progress:
+                            percent = int((downloaded / total_size) * 100)
+                            GLib.idle_add(
+                                self.on_progress,
+                                f"Downloading: {percent}%",
+                                percent / 100.0,
+                            )
+                finally:
+                    temp_file.close()
 
                 if self._stop_event.is_set():
                     if temp_file_path.exists():
@@ -332,21 +350,35 @@ class DownloadThread(threading.Thread):
                         if len(parts) > 1:
                             top_dirs.add(parts[0])
 
-                    if len(top_dirs) == 1:
-                        strip_prefix = top_dirs.pop() + "/"
-                        for member in members:
-                            if member.name.startswith(strip_prefix):
-                                member.name = member.name[len(strip_prefix) :]
-                                if member.name:
-                                    tar.extract(member, path=str(target_dir))
-                    else:
-                        tar.extractall(path=str(target_dir))
+                    strip_prefix = (top_dirs.pop() + "/") if len(top_dirs) == 1 else ""
+
+                    for member in members:
+                        # --- Path traversal protection ---
+                        # Reject absolute paths and any component that resolves outside target_dir
+                        if os.path.isabs(member.name) or ".." in member.name.split("/"):
+                            continue
+
+                        # Strip the single top-level directory if present
+                        effective_name = member.name
+                        if strip_prefix and effective_name.startswith(strip_prefix):
+                            effective_name = effective_name[len(strip_prefix):]
+                        if not effective_name:
+                            continue
+
+                        # Final safety check: resolved path must stay inside target_dir
+                        dest = (target_dir / effective_name).resolve()
+                        if not str(dest).startswith(str(target_dir.resolve())):
+                            continue
+
+                        member.name = effective_name
+                        tar.extract(member, path=str(target_dir))
+
             except Exception as e:
                 if target_dir.exists():
                     shutil.rmtree(target_dir)
                 raise RuntimeError(f"Failed to extract archive: {e}")
             finally:
-                if temp_file_path.exists():
+                if temp_file_path and temp_file_path.exists():
                     temp_file_path.unlink()
 
             server_bin = target_dir / "llama-server"

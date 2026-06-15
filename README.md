@@ -21,10 +21,10 @@
 
 ## Directory Structure Used
 
-- **llama.cpp binaries installation**: `~/.local/share/llama.tray/bin/<version>/`
-- **Configuration file (JSON)**: `~/.config/llama.tray/config.json`
-- **Server log**: `~/.local/share/llama.tray/llama.log`
-- **Update cache**: `~/.cache/llama.tray/releases_cache.json`
+- **llama.cpp binaries installation**: `~/.local/share/llama-tray/bin/<version>/`
+- **Configuration file (JSON)**: `~/.config/llama-tray/config.json`
+- **Server log**: `~/.local/share/llama-tray/llama.log`
+- **Update cache**: `~/.cache/llama-tray/releases_cache.json`
 - **Terminal symlinks (optional)**: `~/.local/bin/llama-server`, `~/.local/bin/llama-cli`
 
 ## Prerequisites

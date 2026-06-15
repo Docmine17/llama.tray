@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import ctypes
+import ctypes.util
 import json
 import logging
 import os
@@ -8,8 +9,8 @@ import signal
 import subprocess
 import sys
 import threading
-from datetime import datetime
 from logging.handlers import RotatingFileHandler
+from typing import Any, Callable, Optional
 
 import gi
 
@@ -22,7 +23,7 @@ except ValueError:
     print("Warning: AyatanaAppIndicator3 not found, trying fallback", file=sys.stderr)
 
 gi.require_version("Notify", "0.7")
-from gi.repository import Gdk, Gio, GLib, Gtk, Notify
+from gi.repository import Gio, GLib, Gtk, Notify
 
 import updater
 
@@ -31,18 +32,18 @@ import updater
 
 
 class LlamaConfig:
-    def __init__(self):
-        self.defaults = {
+    def __init__(self) -> None:
+        self.defaults: dict[str, Any] = {
             "current_version": "",
             "backend": "vulkan",
             "env_vars": "",
             "args": "--port 8080 --host 127.0.0.1",
             "terminal_integration": False,
         }
-        self.data = self.defaults.copy()
+        self.data: dict[str, Any] = self.defaults.copy()
         self.load()
 
-    def load(self):
+    def load(self) -> None:
         if os.path.exists(updater.CONFIG_FILE):
             try:
                 with open(updater.CONFIG_FILE, "r") as f:
@@ -50,7 +51,7 @@ class LlamaConfig:
             except Exception as e:
                 print(f"Error loading config: {e}", file=sys.stderr)
 
-    def save(self):
+    def save(self) -> None:
         try:
             os.makedirs(updater.CONFIG_DIR, exist_ok=True)
             with open(updater.CONFIG_FILE, "w") as f:
@@ -58,15 +59,20 @@ class LlamaConfig:
         except Exception as e:
             print(f"Error saving config: {e}", file=sys.stderr)
 
-    def get(self, key, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         return self.data.get(key, default)
 
-    def set(self, key, value):
+    def set(self, key: str, value: Any) -> None:
         self.data[key] = value
         self.save()
 
+    def set_bulk(self, updates: dict[str, Any]) -> None:
+        """Update multiple keys and save only once."""
+        self.data.update(updates)
+        self.save()
 
-def setup_logger(log_path):
+
+def setup_logger(log_path: str) -> logging.Logger:
     logger = logging.getLogger("llama_server")
     logger.setLevel(logging.INFO)
 
@@ -85,7 +91,7 @@ def setup_logger(log_path):
 
 
 class LlamaProcessManager:
-    def __init__(self, config, on_unexpected_exit=None):
+    def __init__(self, config: LlamaConfig, on_unexpected_exit: Optional[Callable] = None) -> None:
         self.config = config
         self.process = None
         self.log_file_path = os.path.join(updater.LOG_DIR, "llama.log")
@@ -93,12 +99,12 @@ class LlamaProcessManager:
         self.on_unexpected_exit = on_unexpected_exit
         self.intentional_stop = False
 
-    def is_running(self):
+    def is_running(self) -> bool:
         if self.process is None:
             return False
         return self.process.poll() is None
 
-    def start(self):
+    def start(self) -> tuple[bool, str]:
         if self.is_running():
             return True, "Server is already running."
 
@@ -139,7 +145,8 @@ class LlamaProcessManager:
 
         def preexec():
             try:
-                libc = ctypes.CDLL("libc.so.6")
+                libc_name = ctypes.util.find_library("c") or "libc.so.6"
+                libc = ctypes.CDLL(libc_name)
                 libc.prctl(1, 15)
             except Exception:
                 pass
@@ -170,17 +177,19 @@ class LlamaProcessManager:
         except Exception as e:
             return False, f"Failed to start process: {e}"
 
-    def _watch_process(self):
-        if not self.process:
+    def _watch_process(self) -> None:
+        # Capture a local reference to avoid race with stop() setting self.process = None
+        proc = self.process
+        if not proc:
             return
 
         try:
             # Read stdout line by line as it comes
-            for line in iter(self.process.stdout.readline, ""):
+            for line in iter(proc.stdout.readline, ""):
                 if line:
                     self.logger.info(line.strip())
 
-            exit_code = self.process.wait()
+            exit_code = proc.wait()
         except Exception:
             exit_code = -1
 
@@ -189,9 +198,9 @@ class LlamaProcessManager:
             if self.on_unexpected_exit:
                 GLib.idle_add(self.on_unexpected_exit, exit_code)
 
-    def stop(self):
+    def stop(self) -> tuple[bool, str]:
         if not self.is_running():
-            return True
+            return True, ""
 
         self.intentional_stop = True
         try:
@@ -202,7 +211,7 @@ class LlamaProcessManager:
                 self.process.kill()
                 self.process.wait()
             self.process = None
-            return True
+            return True, ""
         except Exception as e:
             return False, f"Error stopping process: {e}"
 
@@ -574,10 +583,12 @@ class SettingsWindow(LlamaWindow):
             args_buf.get_start_iter(), args_buf.get_end_iter(), True
         ).strip()
 
-        self.logic_app.config.set("backend", backend)
-        self.logic_app.config.set("env_vars", env_vars)
-        self.logic_app.config.set("args", args_str)
-        self.logic_app.config.set("terminal_integration", self.term_check.get_active())
+        self.logic_app.config.set_bulk({
+            "backend": backend,
+            "env_vars": env_vars,
+            "args": args_str,
+            "terminal_integration": self.term_check.get_active(),
+        })
 
         # Update terminal symlinks based on new configuration
         version_id = updater.get_version_id(selected_version, backend)
@@ -692,7 +703,7 @@ class LlamaTrayApp(Gtk.Application):
         self.logs_window = None
         self.is_updating = False
 
-    def do_startup(self):
+    def do_startup(self) -> None:
         Gtk.Application.do_startup(self)
 
         # Sync terminal symlinks on startup
@@ -806,14 +817,14 @@ class LlamaTrayApp(Gtk.Application):
             self.show_notification("Error Starting", msg, "error")
 
     def stop_server(self, widget=None):
-        success = self.process_manager.stop()
+        success, err_msg = self.process_manager.stop()
         if success:
             self.show_notification("Llama Server", "Server stopped.", "info")
             self.update_icon()
             self.update_menu()
         else:
             self.show_notification(
-                "Error Stopping", "Could not terminate the process.", "error"
+                "Error Stopping", err_msg or "Could not terminate the process.", "error"
             )
 
     def restart_server(self):
@@ -878,7 +889,7 @@ class LlamaTrayApp(Gtk.Application):
             self.logs_window.show_all()
 
     def quit_app(self):
-        self.process_manager.stop()
+        self.process_manager.stop()  # Return value intentionally ignored on exit
         try:
             Notify.uninit()
         except Exception:
@@ -921,6 +932,9 @@ def main():
             print(f"Error: Invalid argument '{arg}'")
             print_help()
             sys.exit(1)
+
+    # Ensure directories exist before setting up the logger or config
+    updater.ensure_dirs()
 
     app = LlamaTrayApp(autostart=autostart)
 
