@@ -59,7 +59,7 @@ cp data/icons/hicolor/scalable/status/*.svg "$ICONS_DIR/scalable/status/"
 cat << EOF > "$BIN_DIR/llama-tray"
 #!/usr/bin/env bash
 # Wrapper script to start Llama Tray
-exec python "$SRC_DIR/main.py" "\$@"
+exec python3 "$SRC_DIR/main.py" "\$@"
 EOF
 
 # 5. Set execution permissions
