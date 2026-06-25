@@ -27,6 +27,7 @@ CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 BIN_LINK_DIR = Path("~/.local/bin").expanduser()
 BINARIES_TO_LINK = ["llama-server", "llama-cli"]
 
+
 def ensure_dirs() -> None:
     """Creates all required application directories. Called once at startup."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -93,7 +94,9 @@ def get_releases(force_check: bool = False) -> list[dict]:
         raise RuntimeError(f"Error processing updates: {e}")
 
 
-def get_asset_for_backend(release: dict, backend: str) -> Optional[tuple[str, str, Optional[str]]]:
+def get_asset_for_backend(
+    release: dict, backend: str
+) -> Optional[tuple[str, str, Optional[str]]]:
     """Finds the correct asset in the release based on the specified backend."""
     assets = release.get("assets", [])
     system_arch = get_system_arch()
@@ -218,7 +221,9 @@ def manage_symlinks(version_id: Optional[str], enabled: bool) -> bool:
         return False
 
 
-def prepare_download(tag_name: str, backend: str, releases_list: list[dict]) -> tuple[Optional[tuple[str, str, Optional[str]]], str]:
+def prepare_download(
+    tag_name: str, backend: str, releases_list: list[dict]
+) -> tuple[Optional[tuple[str, str, Optional[str]]], str]:
     """
     Resolves the necessary metadata for a download.
     Returns ((version_id, download_url, expected_sha256), error_msg) or (None, error_msg).
@@ -254,6 +259,7 @@ class DownloadThread(threading.Thread):
         on_error,
     ):
         super().__init__()
+        self.daemon = True
         self.tag_name = tag_name
         self.version_id = version_id
         self.download_url = download_url
@@ -362,7 +368,7 @@ class DownloadThread(threading.Thread):
                         # Strip the single top-level directory if present
                         effective_name = member.name
                         if strip_prefix and effective_name.startswith(strip_prefix):
-                            effective_name = effective_name[len(strip_prefix):]
+                            effective_name = effective_name[len(strip_prefix) :]
                         if not effective_name:
                             continue
 
@@ -388,7 +394,7 @@ class DownloadThread(threading.Thread):
                     "Extracted archive does not contain the 'llama-server' executable."
                 )
 
-            server_bin.chmod(0o755)
+            # llama.cpp binaries already have execution permissions.
 
             GLib.idle_add(self.on_progress, "Installation complete!", 1.0)
             GLib.idle_add(self.on_done, self.tag_name, str(target_dir))
