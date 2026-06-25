@@ -1,6 +1,6 @@
 # Llama.tray
 
-`llama.tray` is a lightweight system tray application for Linux, built with Python 3 and GTK 3, designed to manage, configure, monitor, and update instances of `llama.cpp` (including `llama-server` and `llama-cli`).
+`llama.tray` is a system tray application for Linux designed to manage, configure, monitor, and update instances of `llama.cpp` (including `llama-server` and `llama-cli`).
 
 ## Features
 
@@ -34,6 +34,14 @@ You will need Python 3, PyGObject, and Ayatana AppIndicator libraries installed 
 ## Installation
 
 To install run:
+
+```bash
+$ git clone https://github.com/Docmine17/llama.tray.git
+```
+```
+$ cd llama.tray
+```
+
 
 ```
 $ ./setup.sh
