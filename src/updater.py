@@ -21,6 +21,7 @@ CONFIG_DIR = Path("~/.config/llama-tray").expanduser()
 LOG_DIR = Path("~/.local/share/llama-tray").expanduser()
 CACHE_FILE = CACHE_DIR / "releases_cache.json"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+PROFILES_FILE = CONFIG_DIR / "profiles.json"
 CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 
 BIN_LINK_DIR = Path("~/.local/bin").expanduser()

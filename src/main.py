@@ -31,14 +31,65 @@ import updater
 # to ensure consistency between the updater and the main app.
 
 
+class LlamaProfilesManager:
+    def __init__(self) -> None:
+        self.profiles = []
+        self.load()
+
+    def load(self) -> None:
+        if os.path.exists(updater.PROFILES_FILE):
+            try:
+                with open(updater.PROFILES_FILE, "r") as f:
+                    self.profiles = json.load(f)
+            except Exception as e:
+                print(f"Error loading profiles: {e}", file=sys.stderr)
+        
+        # Ensure there is always at least one profile
+        if not self.profiles:
+            self.profiles = [{
+                "name": "Default",
+                "env_vars": "",
+                "args": "--port 8080 --host 127.0.0.1"
+            }]
+            self.save()
+
+    def save(self) -> None:
+        try:
+            os.makedirs(updater.CONFIG_DIR, exist_ok=True)
+            with open(updater.PROFILES_FILE, "w") as f:
+                json.dump(self.profiles, f, indent=4)
+        except Exception as e:
+            print(f"Error saving profiles: {e}", file=sys.stderr)
+
+    def get_profile(self, name: str) -> Optional[dict]:
+        for p in self.profiles:
+            if p["name"] == name:
+                return p
+        return None
+
+    def add_profile(self, profile: dict) -> None:
+        self.profiles.append(profile)
+        self.save()
+
+    def update_profile(self, old_name: str, new_profile: dict) -> None:
+        for i, p in enumerate(self.profiles):
+            if p["name"] == old_name:
+                self.profiles[i] = new_profile
+                self.save()
+                return
+
+    def delete_profile(self, name: str) -> None:
+        self.profiles = [p for p in self.profiles if p["name"] != name]
+        self.save()
+
+
 class LlamaConfig:
     def __init__(self) -> None:
         self.defaults: dict[str, Any] = {
             "current_version": "",
             "backend": "vulkan",
-            "env_vars": "",
-            "args": "--port 8080 --host 127.0.0.1",
             "terminal_integration": False,
+            "current_profile": "Default",
         }
         self.data: dict[str, Any] = self.defaults.copy()
         self.load()
@@ -47,7 +98,19 @@ class LlamaConfig:
         if os.path.exists(updater.CONFIG_FILE):
             try:
                 with open(updater.CONFIG_FILE, "r") as f:
-                    self.data.update(json.load(f))
+                    file_data = json.load(f)
+                    self.data.update(file_data)
+                    
+                    if "env_vars" in file_data or "args" in file_data:
+                        self.migration_needed = {
+                            "env_vars": file_data.get("env_vars", ""),
+                            "args": file_data.get("args", "--port 8080 --host 127.0.0.1")
+                        }
+                        if "env_vars" in self.data:
+                            del self.data["env_vars"]
+                        if "args" in self.data:
+                            del self.data["args"]
+                        self.save()
             except Exception as e:
                 print(f"Error loading config: {e}", file=sys.stderr)
 
@@ -91,8 +154,9 @@ def setup_logger(log_path: str) -> logging.Logger:
 
 
 class LlamaProcessManager:
-    def __init__(self, config: LlamaConfig, on_unexpected_exit: Optional[Callable] = None) -> None:
+    def __init__(self, config: LlamaConfig, profiles_manager: LlamaProfilesManager, on_unexpected_exit: Optional[Callable] = None) -> None:
         self.config = config
+        self.profiles_manager = profiles_manager
         self.process = None
         self.log_file_path = os.path.join(updater.LOG_DIR, "llama.log")
         self.logger = setup_logger(self.log_file_path)
@@ -127,16 +191,31 @@ class LlamaProcessManager:
                 f"Executable not found for backend '{backend}' at: {server_bin}",
             )
 
-        args_str = config_data.get("args", "")
+        args_str = ""
+        env_vars_str = ""
+        current_profile_name = config_data.get("current_profile", "Default")
+        active_profile = self.profiles_manager.get_profile(current_profile_name)
+        if active_profile:
+            args_str = active_profile.get("args", "")
+            env_vars_str = active_profile.get("env_vars", "")
 
         env = os.environ.copy()
-        env_vars_str = config_data.get("env_vars", "")
-        for line in env_vars_str.splitlines():
-            line = line.strip()
-            if not line or "=" not in line:
-                continue
-            k, v = line.split("=", 1)
-            env[k.strip()] = v.strip()
+        
+        try:
+            # Parse environment variables using shlex to correctly handle spaces and quotes
+            env_tokens = shlex.split(env_vars_str)
+            for token in env_tokens:
+                if "=" in token:
+                    k, v = token.split("=", 1)
+                    env[k.strip()] = v.strip()
+        except ValueError:
+            # Fallback to simple line split if there's a syntax error like unbalanced quotes
+            for line in env_vars_str.splitlines():
+                line = line.strip()
+                if not line or "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
 
         try:
             cmd = [server_bin] + shlex.split(args_str)
@@ -342,39 +421,150 @@ class LogsWindow(LlamaWindow):
 
 class SettingsWindow(LlamaWindow):
     def __init__(self, gtk_app, logic_app):
-        super().__init__(gtk_app, "llama.tray Settings", 550, 480)
+        super().__init__(gtk_app, "llama.tray Settings", 600, -1)
         self.logic_app = logic_app
-        self.set_resizable(False)
+        self.set_resizable(True)
 
         self.download_thread = None
         self.releases_list = []
         self.online_releases_loaded = False
         self.fetch_error_msg = ""
+        
+        self.profiles_manager = self.logic_app.profiles_manager
+        import copy
+        self.local_profiles = copy.deepcopy(self.profiles_manager.profiles)
+        self.current_profile_name = self.logic_app.config.get("current_profile", "Default")
+        if not any(p["name"] == self.current_profile_name for p in self.local_profiles):
+            self.current_profile_name = self.local_profiles[0]["name"] if self.local_profiles else ""
 
-        vbox = self.create_main_container(spacing=15, margin=16)
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(400)
+        
+        root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.add(root_vbox)
+        root_vbox.pack_start(scrolled, True, True, 0)
 
-        grid = Gtk.Grid()
-        grid.set_column_spacing(12)
-        grid.set_row_spacing(12)
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24)
+        main_vbox.set_margin_start(24)
+        main_vbox.set_margin_end(24)
+        main_vbox.set_margin_top(24)
+        main_vbox.set_margin_bottom(24)
+        scrolled.add(main_vbox)
 
-        vbox.pack_start(grid, True, True, 0)
+        # ==================== SECTION 1: PERFIL ====================
+        prof_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        
+        prof_title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        prof_title = Gtk.Label()
+        prof_title.set_markup("<span size='large' weight='bold'>Perfil</span>")
+        prof_title.set_xalign(0.0)
+        prof_desc = Gtk.Label(label="Gerencie diferentes conjuntos de argumentos e variáveis de ambiente.")
+        prof_desc.set_xalign(0.0)
+        prof_desc.get_style_context().add_class("dim-label")
+        prof_title_box.pack_start(prof_title, False, False, 0)
+        prof_title_box.pack_start(prof_desc, False, False, 0)
+        
+        prof_header.pack_start(prof_title_box, True, True, 0)
+        
+        self.add_prof_btn = Gtk.Button()
+        self.add_prof_btn.set_tooltip_text("Adicionar novo perfil")
+        add_img = Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON)
+        self.add_prof_btn.set_image(add_img)
+        self.add_prof_btn.set_valign(Gtk.Align.CENTER)
+        self.add_prof_btn.connect("clicked", self.on_add_profile_clicked)
+        prof_header.pack_end(self.add_prof_btn, False, False, 0)
+        
+        main_vbox.pack_start(prof_header, False, False, 0)
 
-        title_lbl = Gtk.Label()
-        title_lbl.set_markup(
-            "<span size='large' weight='bold'>llama.cpp Settings</span>"
-        )
-        title_lbl.set_xalign(0.0)
-        grid.attach(title_lbl, 0, 0, 2, 1)
+        self.profiles_listbox = Gtk.ListBox()
+        self.profiles_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.profiles_listbox.connect("row-selected", self.on_profile_row_selected)
+        
+        list_frame = Gtk.Frame()
+        list_frame.add(self.profiles_listbox)
+        main_vbox.pack_start(list_frame, False, False, 0)
 
-        # Backend Row
+        self.prof_details_frame = Gtk.Frame()
+        details_grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        details_grid.set_margin_start(12)
+        details_grid.set_margin_end(12)
+        details_grid.set_margin_top(12)
+        details_grid.set_margin_bottom(12)
+        self.prof_details_frame.add(details_grid)
+        
+        self.prof_name_entry = Gtk.Entry()
+        self.prof_name_entry.set_hexpand(True)
+        self.prof_name_entry.connect("changed", self.on_profile_name_changed)
+        details_grid.attach(Gtk.Label(label="Nome do Perfil:", xalign=0.0), 0, 0, 1, 1)
+        details_grid.attach(self.prof_name_entry, 1, 0, 1, 1)
+
+        env_lbl = Gtk.Label(label="Variáveis de Ambiente:", xalign=0.0)
+        env_lbl.set_valign(Gtk.Align.START)
+        details_grid.attach(env_lbl, 0, 1, 1, 1)
+        
+        scrolled_env = Gtk.ScrolledWindow()
+        scrolled_env.set_shadow_type(Gtk.ShadowType.IN)
+        scrolled_env.set_size_request(-1, 80)
+        self.env_view = Gtk.TextView()
+        self.env_view.set_accepts_tab(False)
+        self.env_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.env_view.get_buffer().connect("changed", self.on_profile_data_changed)
+        scrolled_env.add(self.env_view)
+        details_grid.attach(scrolled_env, 1, 1, 1, 1)
+
+        args_lbl = Gtk.Label(label="Argumentos:", xalign=0.0)
+        args_lbl.set_valign(Gtk.Align.START)
+        details_grid.attach(args_lbl, 0, 2, 1, 1)
+        
+        scrolled_args = Gtk.ScrolledWindow()
+        scrolled_args.set_shadow_type(Gtk.ShadowType.IN)
+        scrolled_args.set_size_request(-1, 80)
+        self.args_view = Gtk.TextView()
+        self.args_view.set_accepts_tab(False)
+        self.args_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.args_view.get_buffer().connect("changed", self.on_profile_data_changed)
+        scrolled_args.add(self.args_view)
+        details_grid.attach(scrolled_args, 1, 2, 1, 1)
+        
+        self.del_prof_btn = Gtk.Button(label="Excluir Perfil")
+        self.del_prof_btn.get_style_context().add_class("destructive-action")
+        self.del_prof_btn.connect("clicked", self.on_delete_profile_clicked)
+        self.del_prof_btn.set_halign(Gtk.Align.END)
+        details_grid.attach(self.del_prof_btn, 1, 3, 1, 1)
+
+        main_vbox.pack_start(self.prof_details_frame, False, False, 0)
+
+
+        # ==================== SECTION 2: CONFIGURAÇÕES ====================
+        conf_header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        conf_title = Gtk.Label()
+        conf_title.set_markup("<span size='large' weight='bold'>Configurações globais</span>")
+        conf_title.set_xalign(0.0)
+        conf_desc = Gtk.Label(label="Configurações gerais do sistema e do llama.cpp aplicadas a todos os perfis.")
+        conf_desc.set_xalign(0.0)
+        conf_desc.get_style_context().add_class("dim-label")
+        conf_header.pack_start(conf_title, False, False, 0)
+        conf_header.pack_start(conf_desc, False, False, 0)
+        main_vbox.pack_start(conf_header, False, False, 0)
+
+        conf_frame = Gtk.Frame()
+        conf_grid = Gtk.Grid(column_spacing=12, row_spacing=12)
+        conf_grid.set_margin_start(12)
+        conf_grid.set_margin_end(12)
+        conf_grid.set_margin_top(12)
+        conf_grid.set_margin_bottom(12)
+        conf_frame.add(conf_grid)
+        main_vbox.pack_start(conf_frame, False, False, 0)
+
         self.backend_combo = Gtk.ComboBoxText()
         self.backend_combo.append("vulkan", "Vulkan (GPU)")
         self.backend_combo.append("cpu", "CPU (Standard)")
         self.backend_combo.set_hexpand(True)
         self.backend_combo.connect("changed", self.on_backend_changed)
-        self.add_grid_row(grid, "Acceleration (Backend):", self.backend_combo, 1)
+        conf_grid.attach(Gtk.Label(label="Acceleration (Backend):", xalign=0.0), 0, 0, 1, 1)
+        conf_grid.attach(self.backend_combo, 1, 0, 1, 1)
 
-        # Version Row
         version_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.version_combo = Gtk.ComboBoxText()
         self.version_combo.set_hexpand(True)
@@ -383,56 +573,36 @@ class SettingsWindow(LlamaWindow):
 
         self.refresh_releases_btn = Gtk.Button()
         self.refresh_releases_btn.set_tooltip_text("Check for updates on GitHub")
-        refresh_img = Gtk.Image.new_from_icon_name(
-            "view-refresh-symbolic", Gtk.IconSize.BUTTON
-        )
+        refresh_img = Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
         self.refresh_releases_btn.set_image(refresh_img)
-        self.refresh_releases_btn.connect(
-            "clicked", lambda w: self.load_releases(force=True)
-        )
+        self.refresh_releases_btn.connect("clicked", lambda w: self.load_releases(force=True))
         version_hbox.pack_start(self.refresh_releases_btn, False, False, 0)
-        self.add_grid_row(grid, "Version (Release Tag):", version_hbox, 2)
+        conf_grid.attach(Gtk.Label(label="Version (Release Tag):", xalign=0.0), 0, 1, 1, 1)
+        conf_grid.attach(version_hbox, 1, 1, 1, 1)
 
-        # Environment Variables Row
-        scrolled_env = Gtk.ScrolledWindow()
-        scrolled_env.set_shadow_type(Gtk.ShadowType.IN)
-        scrolled_env.set_size_request(-1, 80)
-        self.env_view = Gtk.TextView()
-        self.env_view.set_accepts_tab(False)
-        scrolled_env.add(self.env_view)
-        self.add_grid_row(
-            grid, "Environment Variables:\n(Before command)", scrolled_env, 3
-        )
+        self.term_check = Gtk.CheckButton(label="Add llama-server and llama-cli to ~/.local/bin")
+        conf_grid.attach(Gtk.Label(label="Terminal Integration:", xalign=0.0), 0, 2, 1, 1)
+        conf_grid.attach(self.term_check, 1, 2, 1, 1)
 
-        # Arguments Row
-        scrolled_args = Gtk.ScrolledWindow()
-        scrolled_args.set_shadow_type(Gtk.ShadowType.IN)
-        scrolled_args.set_size_request(-1, 80)
-        self.args_view = Gtk.TextView()
-        self.args_view.set_accepts_tab(False)
-        self.args_view.set_wrap_mode(Gtk.WrapMode.WORD)
-        scrolled_args.add(self.args_view)
-        self.add_grid_row(grid, "Arguments:\n(After command)", scrolled_args, 4)
-
-        # Terminal Integration Row
-        term_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.term_check = Gtk.CheckButton()
-        self.term_check.set_tooltip_text(
-            "Add llama-server and llama-cli to ~/.local/bin"
-        )
-        term_hbox.pack_start(self.term_check, False, False, 0)
-        self.add_grid_row(grid, "Terminal Integration:", term_hbox, 5)
+        action_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        action_area.set_margin_start(24)
+        action_area.set_margin_end(24)
+        action_area.set_margin_top(12)
+        action_area.set_margin_bottom(12)
+        root_vbox.pack_end(action_area, False, False, 0)
 
         self.status_lbl = Gtk.Label(label="", xalign=0)
-        vbox.pack_start(self.status_lbl, False, False, 0)
+        self.status_lbl.set_no_show_all(True)
+        self.status_lbl.hide()
+        action_area.pack_start(self.status_lbl, False, False, 0)
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_fraction(0.0)
         self.progress_bar.set_no_show_all(True)
         self.progress_bar.hide()
-        vbox.pack_start(self.progress_bar, False, False, 0)
+        action_area.pack_start(self.progress_bar, False, False, 0)
 
         hbox_btn = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        vbox.pack_start(hbox_btn, False, False, 0)
+        action_area.pack_start(hbox_btn, False, False, 0)
 
         self.action_btn = Gtk.Button(label="Save and Apply")
         self.action_btn.get_style_context().add_class("suggested-action")
@@ -443,22 +613,166 @@ class SettingsWindow(LlamaWindow):
         self.cancel_btn.connect("clicked", lambda w: self.destroy())
         hbox_btn.pack_end(self.cancel_btn, False, False, 0)
 
-        self.load_fields_from_config()
-        self.connect("destroy", self.on_destroy)
+        self._updating_profile_ui = False
 
+        self.load_fields_from_config()
+        self.populate_profiles_list()
+        self.connect("destroy", self.on_destroy)
         self.load_releases(force=False)
+        self.show_all()
+
+    def set_status_message(self, text, is_markup=False):
+        if not text:
+            self.status_lbl.hide()
+            self.status_lbl.set_text("")
+        else:
+            if is_markup:
+                self.status_lbl.set_markup(text)
+            else:
+                self.status_lbl.set_text(text)
+            self.status_lbl.show()
+
+    def update_profiles_list_visuals(self):
+        for row in self.profiles_listbox.get_children():
+            name = getattr(row, "_profile_name", None)
+            if not name:
+                continue
+            
+            hbox = row.get_child()
+            img, lbl = hbox.get_children()
+            
+            if name == self.current_profile_name:
+                img.set_from_icon_name("object-select-symbolic", Gtk.IconSize.MENU)
+                img.get_style_context().remove_class("dim-label")
+                lbl.set_markup(f"<b>{name}</b>")
+            else:
+                img.set_from_icon_name("user-info-symbolic", Gtk.IconSize.MENU)
+                img.get_style_context().add_class("dim-label")
+                lbl.set_text(name)
+
+    def populate_profiles_list(self):
+        self._updating_profile_ui = True
+        for row in self.profiles_listbox.get_children():
+            self.profiles_listbox.remove(row)
+            
+        row_to_select = None
+        for p in self.local_profiles:
+            row = Gtk.ListBoxRow()
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            hbox.set_margin_start(12)
+            hbox.set_margin_end(12)
+            hbox.set_margin_top(8)
+            hbox.set_margin_bottom(8)
+            
+            icon_name = "object-select-symbolic" if p["name"] == self.current_profile_name else "user-info-symbolic"
+            img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            if p["name"] != self.current_profile_name:
+                img.get_style_context().add_class("dim-label")
+            hbox.pack_start(img, False, False, 0)
+            
+            lbl = Gtk.Label(label=p["name"], xalign=0.0)
+            if p["name"] == self.current_profile_name:
+                lbl.set_markup(f"<b>{p['name']}</b>")
+            hbox.pack_start(lbl, True, True, 0)
+            
+            row.add(hbox)
+            row._profile_name = p["name"]
+            self.profiles_listbox.add(row)
+            row.show_all()
+            
+            if p["name"] == self.current_profile_name:
+                row_to_select = row
+
+        self.del_prof_btn.set_sensitive(len(self.local_profiles) > 1)
+        
+        # Free the flag before selecting row so on_profile_row_selected can do its job
+        self._updating_profile_ui = False
+        
+        if row_to_select:
+            self.profiles_listbox.select_row(row_to_select)
+        else:
+            # If no row to select (e.g. list is empty), trigger manually to clear UI
+            self.on_profile_row_selected(self.profiles_listbox, None)
+
+    def on_profile_row_selected(self, listbox, row):
+        if self._updating_profile_ui:
+            return
+            
+        if not row:
+            self.prof_details_frame.set_sensitive(False)
+            return
+            
+        self.prof_details_frame.set_sensitive(True)
+        self.current_profile_name = row._profile_name
+        
+        self._updating_profile_ui = True
+        prof = next((p for p in self.local_profiles if p["name"] == self.current_profile_name), None)
+        if prof:
+            self.prof_name_entry.set_text(prof["name"])
+            self.env_view.get_buffer().set_text(prof.get("env_vars", ""))
+            self.args_view.get_buffer().set_text(prof.get("args", ""))
+        self._updating_profile_ui = False
+        
+        self.update_profiles_list_visuals()
+
+    def on_profile_name_changed(self, entry):
+        if self._updating_profile_ui:
+            return
+        new_name = entry.get_text().strip()
+        if not new_name:
+            return
+            
+        prof = next((p for p in self.local_profiles if p["name"] == self.current_profile_name), None)
+        if prof and prof["name"] != new_name:
+            if any(p["name"] == new_name for p in self.local_profiles if p != prof):
+                return
+            prof["name"] = new_name
+            self.current_profile_name = new_name
+            
+            row = self.profiles_listbox.get_selected_row()
+            if row:
+                row._profile_name = new_name
+            self.update_profiles_list_visuals()
+
+    def on_profile_data_changed(self, buffer):
+        if self._updating_profile_ui:
+            return
+        prof = next((p for p in self.local_profiles if p["name"] == self.current_profile_name), None)
+        if prof:
+            env_buf = self.env_view.get_buffer()
+            prof["env_vars"] = env_buf.get_text(env_buf.get_start_iter(), env_buf.get_end_iter(), True)
+            
+            args_buf = self.args_view.get_buffer()
+            prof["args"] = args_buf.get_text(args_buf.get_start_iter(), args_buf.get_end_iter(), True)
+
+    def on_add_profile_clicked(self, widget):
+        base_name = "Novo Perfil"
+        name = base_name
+        counter = 1
+        while any(p["name"] == name for p in self.local_profiles):
+            name = f"{base_name} {counter}"
+            counter += 1
+            
+        new_prof = {
+            "name": name,
+            "env_vars": "",
+            "args": "--port 8080 --host 127.0.0.1"
+        }
+        self.local_profiles.append(new_prof)
+        self.current_profile_name = name
+        self.populate_profiles_list()
+
+    def on_delete_profile_clicked(self, widget):
+        if len(self.local_profiles) <= 1:
+            return
+        self.local_profiles = [p for p in self.local_profiles if p["name"] != self.current_profile_name]
+        self.current_profile_name = self.local_profiles[0]["name"]
+        self.populate_profiles_list()
 
     def load_fields_from_config(self):
         config_data = self.logic_app.config.data
         backend = config_data.get("backend", "vulkan")
         self.backend_combo.set_active_id(backend)
-
-        env_buffer = self.env_view.get_buffer()
-        env_buffer.set_text(config_data.get("env_vars", ""))
-
-        args_buffer = self.args_view.get_buffer()
-        args_buffer.set_text(config_data.get("args", ""))
-
         self.term_check.set_active(config_data.get("terminal_integration", False))
 
     def load_releases(self, force=False):
@@ -500,7 +814,7 @@ class SettingsWindow(LlamaWindow):
         if not items:
             self.version_combo.append("none", "No version found")
             self.version_combo.set_active(0)
-            self.status_lbl.set_text("Offline: No local or remote version found.")
+            self.set_status_message("Offline: No local or remote version found.")
             self.version_combo.set_sensitive(True)
             self.refresh_releases_btn.set_sensitive(True)
             self.version_combo.connect("changed", self.on_version_changed)
@@ -528,11 +842,9 @@ class SettingsWindow(LlamaWindow):
         self.refresh_releases_btn.set_sensitive(True)
 
         if not self.online_releases_loaded:
-            self.status_lbl.set_text(
-                f"Offline: showing local versions only. (Error: {self.fetch_error_msg})"
-            )
+            self.set_status_message(f"Offline: showing local versions only. (Error: {self.fetch_error_msg})")
         else:
-            self.status_lbl.set_text("")
+            self.set_status_message("")
 
         self.version_combo.connect("changed", self.on_version_changed)
 
@@ -568,29 +880,18 @@ class SettingsWindow(LlamaWindow):
         backend = self.backend_combo.get_active_id()
 
         if not selected_version or selected_version in ("loading", "none"):
-            self.status_lbl.set_markup(
-                "<span color='red'>Please select a valid llama.cpp version.</span>"
-            )
+            self.set_status_message("<span color='red'>Please select a valid llama.cpp version.</span>", is_markup=True)
             return
 
-        env_buf = self.env_view.get_buffer()
-        env_vars = env_buf.get_text(
-            env_buf.get_start_iter(), env_buf.get_end_iter(), True
-        ).strip()
-
-        args_buf = self.args_view.get_buffer()
-        args_str = args_buf.get_text(
-            args_buf.get_start_iter(), args_buf.get_end_iter(), True
-        ).strip()
+        self.profiles_manager.profiles = self.local_profiles
+        self.profiles_manager.save()
 
         self.logic_app.config.set_bulk({
             "backend": backend,
-            "env_vars": env_vars,
-            "args": args_str,
             "terminal_integration": self.term_check.get_active(),
+            "current_profile": self.current_profile_name,
         })
 
-        # Update terminal symlinks based on new configuration
         version_id = updater.get_version_id(selected_version, backend)
         updater.manage_symlinks(version_id, self.term_check.get_active())
 
@@ -611,13 +912,13 @@ class SettingsWindow(LlamaWindow):
             tag_name, backend, self.releases_list
         )
         if not download_info:
-            self.status_lbl.set_markup(f"<span color='red'>{err_msg}</span>")
+            self.set_status_message(f"<span color='red'>{err_msg}</span>", is_markup=True)
             return
 
         version_id, download_url, expected_sha256 = download_info
 
         self.set_sensitive_inputs(False)
-        self.status_lbl.set_text("Starting download...")
+        self.set_status_message("Starting download...")
         self.progress_bar.set_fraction(0.0)
         self.progress_bar.show()
 
@@ -638,19 +939,22 @@ class SettingsWindow(LlamaWindow):
         self.backend_combo.set_sensitive(sensitive)
         self.version_combo.set_sensitive(sensitive)
         self.refresh_releases_btn.set_sensitive(sensitive)
+        self.prof_name_entry.set_sensitive(sensitive)
         self.env_view.set_sensitive(sensitive)
         self.args_view.set_sensitive(sensitive)
         self.action_btn.set_sensitive(sensitive)
         self.cancel_btn.set_sensitive(sensitive)
+        self.add_prof_btn.set_sensitive(sensitive)
+        self.del_prof_btn.set_sensitive(sensitive)
+        self.profiles_listbox.set_sensitive(sensitive)
 
     def on_download_progress(self, message, fraction):
-        self.status_lbl.set_text(message)
+        self.set_status_message(message)
         self.progress_bar.set_fraction(fraction)
 
     def on_download_done(self, tag_name, target_dir):
         self.logic_app.config.set("current_version", tag_name)
 
-        # Update terminal symlinks for the new version if enabled
         backend = self.backend_combo.get_active_id() or "vulkan"
         version_id = updater.get_version_id(tag_name, backend)
         integration_enabled = self.logic_app.config.get("terminal_integration", False)
@@ -670,9 +974,7 @@ class SettingsWindow(LlamaWindow):
     def on_download_error(self, err_msg):
         self.set_sensitive_inputs(True)
         self.progress_bar.hide()
-        self.status_lbl.set_markup(
-            f"<span color='red'>Installation failed: {err_msg}</span>"
-        )
+        self.status_lbl.hide()
         self.logic_app.set_updating_state(False)
         self.logic_app.show_notification(
             "Installation Error", f"An error occurred: {err_msg}", "error"
@@ -684,7 +986,6 @@ class SettingsWindow(LlamaWindow):
         self.logic_app.set_updating_state(False)
         self.logic_app.settings_window = None
 
-
 class LlamaTrayApp(Gtk.Application):
     def __init__(self, autostart=False):
         super().__init__(
@@ -694,9 +995,29 @@ class LlamaTrayApp(Gtk.Application):
         Notify.init("llama-tray")
 
         self.config = LlamaConfig()
+        self.profiles_manager = LlamaProfilesManager()
+
+        if hasattr(self.config, "migration_needed"):
+            mgr_data = self.config.migration_needed
+            found = False
+            for p in self.profiles_manager.profiles:
+                if p["name"] == "Default":
+                    p["env_vars"] = mgr_data["env_vars"]
+                    p["args"] = mgr_data["args"]
+                    found = True
+                    break
+            if not found:
+                self.profiles_manager.profiles.insert(0, {
+                    "name": "Default",
+                    "env_vars": mgr_data["env_vars"],
+                    "args": mgr_data["args"]
+                })
+            self.profiles_manager.save()
+            self.config.set("current_profile", "Default")
+            delattr(self.config, "migration_needed")
 
         self.process_manager = LlamaProcessManager(
-            self.config, on_unexpected_exit=self.on_server_crashed
+            self.config, self.profiles_manager, on_unexpected_exit=self.on_server_crashed
         )
 
         self.settings_window = None
