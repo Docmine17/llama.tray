@@ -948,9 +948,6 @@ class SettingsWindow(LlamaWindow):
 
         if updater.is_version_installed(selected_version, backend):
             self.logic_app.config.set("current_version", selected_version)
-            self.logic_app.show_notification(
-                "Configuration Saved", f"Version {selected_version} ({backend}) active."
-            )
 
             if self.logic_app.process_manager.is_running():
                 self.logic_app.restart_server()
@@ -1192,9 +1189,6 @@ class LlamaTrayApp(Gtk.Application):
     def start_server(self, widget=None):
         success, msg = self.process_manager.start()
         if success:
-            self.show_notification(
-                "Llama Server", "Server started successfully!", "success"
-            )
             self.update_icon()
             self.update_menu()
         else:
@@ -1203,7 +1197,6 @@ class LlamaTrayApp(Gtk.Application):
     def stop_server(self, widget=None):
         success, err_msg = self.process_manager.stop()
         if success:
-            self.show_notification("Llama Server", "Server stopped.", "info")
             self.update_icon()
             self.update_menu()
         else:
