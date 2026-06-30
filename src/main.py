@@ -78,6 +78,7 @@ class LlamaConfig:
             "backend": "vulkan",
             "terminal_integration": False,
             "current_profile": "Default",
+            "autostart": "Disabled",
         }
         self.data: dict[str, Any] = self.defaults.copy()
         self.migration_needed = None
@@ -136,7 +137,7 @@ def setup_logger(log_path: str) -> logging.Logger:
             log_path, maxBytes=10 * 1024 * 1024, backupCount=1, encoding="utf-8"
         )
         formatter = logging.Formatter(
-            "%(asctime)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            "%(message)s"
         )
         handler.setFormatter(formatter)
         logger.addHandler(handler)
@@ -411,7 +412,7 @@ class LogsWindow(LlamaWindow):
 
 class SettingsWindow(LlamaWindow):
     def __init__(self, gtk_app, logic_app):
-        super().__init__(gtk_app, "llama.tray Settings", 600, -1)
+        super().__init__(gtk_app, "llama.tray Settings", 600, 900)
         self.logic_app = logic_app
         self.set_resizable(True)
 
@@ -587,12 +588,22 @@ class SettingsWindow(LlamaWindow):
         conf_grid.attach(version_hbox, 1, 1, 1, 1)
 
         self.term_check = Gtk.CheckButton(
-            label="Add llama-server and llama-cli to ~/.local/bin"
+            label="Add llama.cpp binaries to ~/.local/bin"
         )
         conf_grid.attach(
             Gtk.Label(label="Terminal Integration:", xalign=0.0), 0, 2, 1, 1
         )
         conf_grid.attach(self.term_check, 1, 2, 1, 1)
+
+        self.autostart_combo = Gtk.ComboBoxText()
+        self.autostart_combo.append("Disabled", "Disabled")
+        self.autostart_combo.append("Enabled", "Enabled")
+        self.autostart_combo.append("Enabled with Server", "Enabled with Server")
+        self.autostart_combo.set_hexpand(True)
+        conf_grid.attach(
+            Gtk.Label(label="Autostart:", xalign=0.0), 0, 3, 1, 1
+        )
+        conf_grid.attach(self.autostart_combo, 1, 3, 1, 1)
 
         action_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         action_area.set_margin_start(24)
@@ -803,6 +814,7 @@ class SettingsWindow(LlamaWindow):
         backend = config_data.get("backend", "vulkan")
         self.backend_combo.set_active_id(backend)
         self.term_check.set_active(config_data.get("terminal_integration", False))
+        self.autostart_combo.set_active_id(config_data.get("autostart", "Disabled"))
 
     def load_releases(self, force=False):
         self.version_combo.set_sensitive(False)
@@ -909,6 +921,7 @@ class SettingsWindow(LlamaWindow):
     def on_action_clicked(self, widget):
         selected_version = self.get_selected_version()
         backend = self.backend_combo.get_active_id()
+        autostart_mode = self.autostart_combo.get_active_id()
 
         if not selected_version or selected_version in ("loading", "none"):
             self.set_status_message(
@@ -925,11 +938,13 @@ class SettingsWindow(LlamaWindow):
                 "backend": backend,
                 "terminal_integration": self.term_check.get_active(),
                 "current_profile": self.current_profile_name,
+                "autostart": autostart_mode,
             }
         )
 
         version_id = updater.get_version_id(selected_version, backend)
         updater.manage_symlinks(version_id, self.term_check.get_active())
+        updater.manage_autostart(autostart_mode)
 
         if updater.is_version_installed(selected_version, backend):
             self.logic_app.config.set("current_version", selected_version)
@@ -1082,6 +1097,10 @@ class LlamaTrayApp(Gtk.Application):
         else:
             # Ensure no stray links if no version is active
             updater.manage_symlinks(None, integration_enabled)
+
+        # Sync autostart configuration
+        autostart_mode = self.config.get("autostart", "Disabled")
+        updater.manage_autostart(autostart_mode)
 
         self.hold()
 

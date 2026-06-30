@@ -18,14 +18,15 @@ from gi.repository import GLib
 CACHE_DIR = Path("~/.cache/llama-tray").expanduser()
 INSTALL_DIR = Path("~/.local/share/llama-tray/bin").expanduser()
 CONFIG_DIR = Path("~/.config/llama-tray").expanduser()
+AUTOSTART_DIR = Path("~/.config/autostart").expanduser()
 LOG_DIR = Path("~/.local/share/llama-tray").expanduser()
 CACHE_FILE = CACHE_DIR / "releases_cache.json"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 PROFILES_FILE = CONFIG_DIR / "profiles.json"
+AUTOSTART_FILE = AUTOSTART_DIR / "llama-tray.desktop"
 CACHE_EXPIRY_SECONDS = 3600  # 1 hour
 
 BIN_LINK_DIR = Path("~/.local/bin").expanduser()
-BINARIES_TO_LINK = ["llama-server", "llama-cli"]
 
 
 def ensure_dirs() -> None:
@@ -177,32 +178,50 @@ def get_version_list(releases_list: list[dict], backend: str) -> list[tuple[str,
     return items
 
 
+def get_version_binaries(version_id: str) -> list[str]:
+    """
+    Scans the version directory and returns a list of executable binaries
+    that are not shared libraries (avoiding anything containing '.so').
+    """
+    target_dir = INSTALL_DIR / version_id
+    if not target_dir.exists():
+        return []
+    
+    return [
+        item.name for item in target_dir.iterdir()
+        if item.is_file() and os.access(item, os.X_OK) and '.so' not in item.name
+    ]
+
+
 def manage_symlinks(version_id: Optional[str], enabled: bool) -> bool:
     """
     Creates or removes symlinks for llama binaries in ~/.local/bin.
     """
     try:
+        # We need a version_id to know which binaries to link or unlink
+        if not version_id:
+            return False
+
+        binaries = get_version_binaries(version_id)
+
         if not enabled:
-            # Remove existing links if integration is disabled
-            for bin_name in BINARIES_TO_LINK:
+            # Remove existing links for the current version's binaries
+            for bin_name in binaries:
                 link_path = BIN_LINK_DIR / bin_name
                 if link_path.is_symlink() or link_path.exists():
                     link_path.unlink()
             return True
 
-        if not version_id:
-            return False
-
         # Ensure ~/.local/bin exists
         BIN_LINK_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Target directory for the binaries
         target_dir = INSTALL_DIR / version_id
         if not target_dir.exists():
             return False
 
-        for bin_name in BINARIES_TO_LINK:
+        for bin_name in binaries:
             bin_path = target_dir / bin_name
+            # Binary check already done in get_version_binaries, but safety first
             if not bin_path.exists():
                 continue
 
@@ -218,6 +237,39 @@ def manage_symlinks(version_id: Optional[str], enabled: bool) -> bool:
         return True
     except Exception as e:
         print(f"Error managing symlinks: {e}")
+        return False
+
+
+def manage_autostart(mode: str) -> bool:
+    """
+    Manages the llama-tray.desktop file in ~/.config/autostart.
+    Modes: 'Disabled', 'Enabled', 'Enabled with Server'
+    """
+    try:
+        if mode == "Disabled":
+            if AUTOSTART_FILE.exists():
+                AUTOSTART_FILE.unlink()
+            return True
+
+        # Ensure directory exists
+        AUTOSTART_DIR.mkdir(parents=True, exist_ok=True)
+
+        exec_cmd = (
+            "llama-tray --autostart" if mode == "Enabled with Server" else "llama-tray"
+        )
+
+        content = [
+            "[Desktop Entry]",
+            "Type=Application",
+            "Name=llama.cpp",
+            f"Exec={exec_cmd}",
+            "Icon=llama-tray-icon",
+        ]
+
+        AUTOSTART_FILE.write_text("\n".join(content) + "\n")
+        return True
+    except Exception as e:
+        print(f"Error managing autostart: {e}")
         return False
 
 
