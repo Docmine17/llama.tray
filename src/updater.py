@@ -186,10 +186,11 @@ def get_version_binaries(version_id: str) -> list[str]:
     target_dir = INSTALL_DIR / version_id
     if not target_dir.exists():
         return []
-    
+
     return [
-        item.name for item in target_dir.iterdir()
-        if item.is_file() and os.access(item, os.X_OK) and '.so' not in item.name
+        item.name
+        for item in target_dir.iterdir()
+        if item.is_file() and os.access(item, os.X_OK) and ".so" not in item.name
     ]
 
 
@@ -261,8 +262,8 @@ def manage_autostart(mode: str) -> bool:
         content = [
             "[Desktop Entry]",
             "Type=Application",
-            "Name=llama.cpp",
-            f"Exec={exec_cmd}",
+            "Name=Llama Tray",
+            f"Exec=bash -c '~/.local/bin/{exec_cmd}'",
             "Icon=llama-tray-icon",
         ]
 
