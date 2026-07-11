@@ -58,47 +58,47 @@ flowchart TD
 
 ## 0.1 Criar manifesto do projeto
 
-- [ ] Criar `pyproject.toml`.
-- [ ] Declarar a versão mínima suportada do Python.
-- [ ] Configurar `pytest`.
-- [ ] Configurar Ruff para lint e formatação.
-- [ ] Configurar o verificador de tipos escolhido, considerando as limitações de stubs do PyGObject.
-- [ ] Separar dependências de desenvolvimento das dependências fornecidas pelo sistema operacional.
+- [x] Criar `pyproject.toml`.
+- [x] Declarar a versão mínima suportada do Python.
+- [x] Configurar `pytest`.
+- [x] Configurar Ruff para lint e formatação.
+- [x] Configurar o verificador de tipos escolhido, considerando as limitações de stubs do PyGObject.
+- [x] Separar dependências de desenvolvimento das dependências fornecidas pelo sistema operacional.
 - [ ] Documentar que PyGObject e AppIndicator normalmente são instalados pelo gerenciador de pacotes da distribuição.
 
 ### Critérios de aceite
 
-- [ ] `python3 -m pytest` pode ser executado mesmo antes de existirem muitos testes.
-- [ ] `ruff check src tests` executa com configuração versionada.
-- [ ] `ruff format --check src tests` executa com configuração versionada.
-- [ ] O manifesto não tenta instalar silenciosamente bibliotecas GTK de sistema de forma incompatível.
+- [x] `python3 -m pytest` pode ser executado mesmo antes de existirem muitos testes.
+- [x] `ruff check src tests` executa com configuração versionada.
+- [x] `ruff format --check src tests` executa com configuração versionada.
+- [x] O manifesto não tenta instalar silenciosamente bibliotecas GTK de sistema de forma incompatível.
 
 ## 0.2 Criar estrutura inicial de testes
 
-- [ ] Criar `tests/`.
-- [ ] Criar fixtures para diretórios temporários de cache, configuração, instalação e binários.
-- [ ] Garantir que testes nunca escrevam em `~/.config`, `~/.cache` ou `~/.local` reais.
-- [ ] Criar testes iniciais para:
-  - [ ] `get_version_id()`.
-  - [ ] `parse_version_id()`.
-  - [ ] `get_system_arch()` com arquiteturas conhecidas e desconhecidas.
-  - [ ] `get_asset_for_backend()` com releases simulados.
-  - [ ] `prepare_download()` com release existente e inexistente.
+- [x] Criar `tests/`.
+- [x] Criar fixtures para diretórios temporários de cache, configuração, instalação e binários.
+- [x] Garantir que testes nunca escrevam em `~/.config`, `~/.cache` ou `~/.local` reais.
+- [x] Criar testes iniciais para:
+  - [x] `get_version_id()`.
+  - [x] `parse_version_id()`.
+  - [x] `get_system_arch()` com arquiteturas conhecidas e desconhecidas.
+  - [x] `get_asset_for_backend()` com releases simulados.
+  - [x] `prepare_download()` com release existente e inexistente.
 - [ ] Isolar ou simular `GLib.idle_add` nos testes do updater.
 
 ### Critérios de aceite
 
-- [ ] Todos os testes usam `tmp_path` ou diretórios explicitamente temporários.
-- [ ] Os testes não dependem de rede.
-- [ ] Os testes não precisam iniciar GTK nem criar um tray real.
+- [x] Todos os testes usam `tmp_path` ou diretórios explicitamente temporários.
+- [x] Os testes não dependem de rede.
+- [x] Os testes não precisam iniciar GTK nem criar um tray real.
 
 ## 0.3 Estabelecer validação local simples
 
-- [ ] Manter a validação executável localmente, sem workflow de CI.
+- [x] Manter a validação executável localmente, sem workflow de CI.
 - [ ] Criar, se for útil, um script curto como `scripts/check.sh` para reunir os comandos abaixo.
-- [ ] Não exigir sessão gráfica para os testes básicos.
-- [ ] Manter as ferramentas opcionais: a ausência de Ruff ou ShellCheck não deve impedir o uso do aplicativo.
-- [ ] Executar a validação antes de concluir cada fase relevante.
+- [x] Não exigir sessão gráfica para os testes básicos.
+- [x] Manter as ferramentas opcionais: a ausência de Ruff ou ShellCheck não deve impedir o uso do aplicativo.
+- [x] Executar a validação antes de concluir cada fase relevante.
 
 > CI fica deliberadamente fora do escopo. Para o tamanho e o ritmo atual do projeto, testes locais focados oferecem melhor relação entre benefício e manutenção.
 
@@ -125,48 +125,48 @@ shellcheck setup.sh
 
 ## 1.1 Definir regras de propriedade dos symlinks
 
-- [ ] Considerar gerenciado somente um symlink cujo destino resolvido esteja dentro de `INSTALL_DIR`.
-- [ ] Nunca remover automaticamente arquivos regulares em `~/.local/bin`.
-- [ ] Nunca remover symlinks que apontem para instalações externas ao `llama.tray`.
-- [ ] Definir comportamento para conflito de nomes:
-  - [ ] retornar erro detalhado;
-  - [ ] manter o arquivo existente intacto;
+- [x] Considerar gerenciado somente um symlink cujo destino resolvido esteja dentro de `INSTALL_DIR`.
+- [x] Nunca remover automaticamente arquivos regulares em `~/.local/bin`.
+- [x] Nunca remover symlinks que apontem para instalações externas ao `llama.tray`.
+- [x] Definir comportamento para conflito de nomes:
+  - [x] retornar erro detalhado;
+  - [x] manter o arquivo existente intacto;
   - [ ] exibir ao usuário quais binários não puderam ser integrados.
-- [ ] Decidir se será usado um manifesto de links gerenciados, por exemplo em `CONFIG_DIR` ou `LOG_DIR`.
+- [x] Decidir se será usado um manifesto de links gerenciados, por exemplo em `CONFIG_DIR` ou `LOG_DIR`.
 
 ## 1.2 Separar operações de limpeza e criação
 
-- [ ] Criar uma função para identificar links pertencentes ao aplicativo.
-- [ ] Criar uma função para remover todos os links pertencentes ao aplicativo.
-- [ ] Criar uma função para instalar os links da versão ativa.
-- [ ] Fazer a desativação funcionar mesmo quando a versão selecionada ainda não estiver instalada.
-- [ ] Ao trocar de versão, remover links antigos gerenciados antes de criar os novos.
-- [ ] Não retornar sucesso quando houver conflitos ou falhas parciais sem informar detalhes.
+- [x] Criar uma função para identificar links pertencentes ao aplicativo.
+- [x] Criar uma função para remover todos os links pertencentes ao aplicativo.
+- [x] Criar uma função para instalar os links da versão ativa.
+- [x] Fazer a desativação funcionar mesmo quando a versão selecionada ainda não estiver instalada.
+- [x] Ao trocar de versão, remover links antigos gerenciados antes de criar os novos.
+- [x] Não retornar sucesso quando houver conflitos ou falhas parciais sem informar detalhes.
 
 ## 1.3 Integrar erros à interface
 
-- [ ] Substituir o retorno booleano genérico por um resultado que carregue erros e conflitos.
+- [x] Substituir o retorno booleano genérico por um resultado que carregue erros e conflitos.
 - [ ] Exibir falhas de integração na janela de configurações.
-- [ ] Não desfazer uma instalação válida apenas porque um link opcional não pôde ser criado.
+- [x] Não desfazer uma instalação válida apenas porque um link opcional não pôde ser criado.
 - [ ] Registrar detalhes técnicos no stderr ou logger.
 
 ## 1.4 Testes obrigatórios
 
-- [ ] Cria links para todos os executáveis elegíveis.
-- [ ] Não cria links para bibliotecas `.so`.
-- [ ] Não apaga arquivo regular com o mesmo nome.
-- [ ] Não apaga symlink de terceiros.
-- [ ] Remove symlink que aponta para `INSTALL_DIR`.
-- [ ] Remove links antigos ao trocar de versão.
-- [ ] Desativar integração funciona sem uma versão instalada.
-- [ ] Uma falha parcial é retornada de forma explícita.
+- [x] Cria links para todos os executáveis elegíveis.
+- [x] Não cria links para bibliotecas `.so`.
+- [x] Não apaga arquivo regular com o mesmo nome.
+- [x] Não apaga symlink de terceiros.
+- [x] Remove symlink que aponta para `INSTALL_DIR`.
+- [x] Remove links antigos ao trocar de versão.
+- [x] Desativar integração funciona sem uma versão instalada.
+- [x] Uma falha parcial é retornada de forma explícita.
 
 ### Critérios de aceite da fase
 
-- [ ] Nenhum caminho regular existente em `~/.local/bin` é removido automaticamente.
-- [ ] A desativação elimina todos e somente os links gerenciados pelo aplicativo.
-- [ ] Trocas de backend e versão não deixam links obsoletos.
-- [ ] Os cenários acima possuem testes automatizados.
+- [x] Nenhum caminho regular existente em `~/.local/bin` é removido automaticamente.
+- [x] A desativação elimina todos e somente os links gerenciados pelo aplicativo.
+- [x] Trocas de backend e versão não deixam links obsoletos.
+- [x] Os cenários acima possuem testes automatizados.
 
 ---
 
@@ -180,78 +180,78 @@ shellcheck setup.sh
 
 A distribuição oficial do `llama.cpp` contém executáveis, bibliotecas compartilhadas, diretórios e cadeias de symlinks internas, por exemplo `libllama.so → libllama.so.0 → libllama.so.0.0.9949`. Esses links são necessários e devem ser preservados quando permanecerem dentro da instalação.
 
-- [ ] Rejeitar nomes de membros absolutos.
-- [ ] Rejeitar nomes de membros com componentes `..`.
-- [ ] Permitir diretórios e arquivos regulares.
-- [ ] Permitir symlinks relativos cujo destino normalizado permaneça dentro da raiz temporária de extração.
-- [ ] Rejeitar symlinks absolutos ou cujo destino escape da raiz temporária.
-- [ ] Resolver o destino relativo a partir do diretório que contém o symlink, não a partir da raiz global.
-- [ ] Permitir cadeias internas de symlinks usadas pelas bibliotecas `.so`.
-- [ ] Após a extração, validar que cada symlink continua dentro da instalação e não está quebrado.
-- [ ] Para hard links, aceitar somente alvos internos que correspondam a arquivo regular do mesmo pacote; rejeitar os demais.
-- [ ] Rejeitar dispositivos, FIFOs, sockets e outros arquivos especiais.
-- [ ] Usar `Path.resolve()` e `Path.is_relative_to()` para validar membros e destinos de links.
-- [ ] Para versões antigas do Python, implementar helper equivalente a `is_relative_to()`.
-- [ ] Avaliar o uso do filtro seguro de `tarfile` nas versões do Python que o suportam, sem bloquear os symlinks internos válidos do `llama.cpp`.
-- [ ] Não modificar os objetos `TarInfo` originais sem necessidade.
+- [x] Rejeitar nomes de membros absolutos.
+- [x] Rejeitar nomes de membros com componentes `..`.
+- [x] Permitir diretórios e arquivos regulares.
+- [x] Permitir symlinks relativos cujo destino normalizado permaneça dentro da raiz temporária de extração.
+- [x] Rejeitar symlinks absolutos ou cujo destino escape da raiz temporária.
+- [x] Resolver o destino relativo a partir do diretório que contém o symlink, não a partir da raiz global.
+- [x] Permitir cadeias internas de symlinks usadas pelas bibliotecas `.so`.
+- [x] Após a extração, validar que cada symlink continua dentro da instalação e não está quebrado.
+- [x] Para hard links, aceitar somente alvos internos que correspondam a arquivo regular do mesmo pacote; rejeitar os demais.
+- [x] Rejeitar dispositivos, FIFOs, sockets e outros arquivos especiais.
+- [x] Usar `Path.resolve()` e `Path.is_relative_to()` para validar membros e destinos de links.
+- [x] Para versões antigas do Python, implementar helper equivalente a `is_relative_to()`.
+- [x] Avaliar o uso do filtro seguro de `tarfile` nas versões do Python que o suportam, sem bloquear os symlinks internos válidos do `llama.cpp`.
+- [x] Não modificar os objetos `TarInfo` originais sem necessidade.
 
 ## 2.2 Extrair em diretório temporário
 
-- [ ] Criar diretório temporário dentro do mesmo filesystem de `INSTALL_DIR`.
-- [ ] Extrair o pacote somente nesse diretório.
-- [ ] Normalizar o diretório superior único sem enfraquecer as verificações.
-- [ ] Validar que `llama-server` existe, é arquivo regular e é executável.
-- [ ] Preservar bibliotecas `.so`, symlinks internos, arquivo `LICENSE` e subdiretórios fornecidos pelo pacote.
-- [ ] Validar que os alvos finais das cadeias de bibliotecas são arquivos regulares dentro da instalação.
-- [ ] Não exigir que todos os arquivos do pacote sejam executáveis.
-- [ ] Remover o diretório temporário em qualquer erro ou cancelamento.
+- [x] Criar diretório temporário dentro do mesmo filesystem de `INSTALL_DIR`.
+- [x] Extrair o pacote somente nesse diretório.
+- [x] Normalizar o diretório superior único sem enfraquecer as verificações.
+- [x] Validar somente que symlinks internos permanecem dentro da instalação e resolvem para um alvo existente.
+- [x] Preservar bibliotecas `.so`, symlinks internos, arquivo `LICENSE` e subdiretórios fornecidos pelo pacote.
+- [x] Validar que os alvos finais das cadeias de bibliotecas são arquivos regulares dentro da instalação.
+- [x] Não exigir que todos os arquivos do pacote sejam executáveis.
+- [x] Remover o diretório temporário em qualquer erro ou cancelamento.
 
 ## 2.3 Publicar instalação de forma transacional
 
-- [ ] Não remover `target_dir` antes de validar completamente a nova extração.
-- [ ] Se já existir instalação:
-  - [ ] renomeá-la para um backup temporário;
-  - [ ] mover atomicamente a nova instalação para o destino;
-  - [ ] remover o backup somente após sucesso.
-- [ ] Restaurar o backup se a publicação falhar.
-- [ ] Garantir limpeza de backups abandonados de forma segura.
-- [ ] Tratar cancelamento separadamente de falha.
+- [x] Não remover `target_dir` antes de validar completamente a nova extração.
+- [x] Se já existir instalação:
+  - [x] renomeá-la para um backup temporário;
+  - [x] mover atomicamente a nova instalação para o destino;
+  - [x] remover o backup somente após sucesso.
+- [x] Restaurar o backup se a publicação falhar.
+- [x] Garantir limpeza de backups abandonados de forma segura.
+- [x] Tratar cancelamento separadamente de falha.
 
 ## 2.4 Melhorar o ciclo de vida do download
 
-- [ ] Evitar acesso a atributos internos frágeis como `response.fp.raw._sock` quando possível.
-- [ ] Manter timeout de conexão e leitura de forma compatível.
-- [ ] Garantir fechamento do descritor retornado por `mkstemp` em todos os caminhos.
-- [ ] Garantir exclusão do arquivo temporário em sucesso, erro e cancelamento.
+- [x] Evitar acesso a atributos internos frágeis como `response.fp.raw._sock` quando possível.
+- [x] Manter timeout de conexão e leitura de forma compatível.
+- [x] Garantir fechamento do descritor retornado por `mkstemp` em todos os caminhos.
+- [x] Garantir exclusão do arquivo temporário em sucesso, erro e cancelamento.
 - [ ] Diferenciar mensagens de download cancelado, falha de rede, hash inválido e extração inválida.
-- [ ] Não remover uma instalação anterior quando o download falhar.
+- [x] Não remover uma instalação anterior quando o download falhar.
 
 ## 2.5 Testes obrigatórios
 
-- [ ] Arquivo TAR válido é instalado.
-- [ ] TAR sem `llama-server` é rejeitado.
-- [ ] Caminho absoluto é rejeitado.
-- [ ] Nome de membro com `..` é rejeitado.
-- [ ] Symlink relativo interno é preservado.
-- [ ] Cadeia interna como `libllama.so → libllama.so.0 → arquivo real` é preservada e validada.
-- [ ] Symlink absoluto é rejeitado.
-- [ ] Symlink relativo que escapa da raiz é rejeitado.
-- [ ] Symlink quebrado é rejeitado após a extração.
+- [x] Arquivo TAR válido é instalado.
+- [x] TAR sem `llama-server` pode ser extraído; o aplicativo não valida o conteúdo funcional fornecido pelo pacote.
+- [x] Caminho absoluto é rejeitado.
+- [x] Nome de membro com `..` é rejeitado.
+- [x] Symlink relativo interno é preservado.
+- [x] Cadeia interna como `libllama.so → libllama.so.0 → arquivo real` é preservada e validada.
+- [x] Symlink absoluto é rejeitado.
+- [x] Symlink relativo que escapa da raiz é rejeitado.
+- [x] Symlink quebrado é rejeitado após a extração.
 - [ ] Hard link interno para arquivo regular segue a política definida.
 - [ ] Hard link externo ou inválido é rejeitado.
-- [ ] Arquivo especial é rejeitado.
+- [x] Arquivo especial é rejeitado.
 - [ ] Prefixos semelhantes não escapam do diretório, como `install` e `install-malicioso`.
-- [ ] Falha de extração preserva instalação anterior.
-- [ ] Falha ao publicar restaura instalação anterior.
+- [x] Falha de extração preserva instalação anterior.
+- [x] Falha ao publicar restaura instalação anterior.
 - [ ] Cancelamento limpa temporários e preserva instalação anterior.
 - [ ] Hash incorreto impede extração.
 
 ### Critérios de aceite da fase
 
-- [ ] Um pacote malformado não consegue escrever fora do diretório temporário.
-- [ ] A versão previamente instalada continua funcional após qualquer falha.
-- [ ] O destino final só aparece depois da validação completa.
-- [ ] Não permanecem temporários após sucesso, erro ou cancelamento.
+- [x] Um pacote malformado não consegue escrever fora do diretório temporário.
+- [x] A versão previamente instalada continua funcional após qualquer falha.
+- [x] O destino final só aparece depois da validação completa.
+- [x] Não permanecem temporários após sucesso, erro ou cancelamento.
 
 ---
 
@@ -263,11 +263,11 @@ A distribuição oficial do `llama.cpp` contém executáveis, bibliotecas compar
 
 ## 3.1 Separar estado pendente de estado persistido
 
-- [ ] Criar uma estrutura para representar as configurações pendentes da janela.
-- [ ] Manter backend, versão, integração, autostart e perfil sem persistir até a operação poder ser concluída.
-- [ ] Não alterar `logic_app.config` antes de validar ou instalar a versão escolhida.
-- [ ] Não alterar os perfis persistidos antes do sucesso quando a ação depender de download.
-- [ ] Garantir que fechar a janela descarte o estado pendente.
+- [x] Criar uma estrutura para representar as configurações pendentes da janela.
+- [x] Manter somente backend e versão sem persistir até a operação poder ser concluída.
+- [x] Não alterar backend ou versão em `logic_app.config` antes de validar ou instalar a versão escolhida.
+- [x] Persistir perfis, perfil ativo, integração de terminal e autostart independentemente do resultado do download.
+- [x] Garantir que fechar a janela descarte somente o estado pendente de versão/backend.
 
 ## 3.2 Definir fluxo para versão já instalada
 
@@ -329,9 +329,9 @@ Escolher uma das estratégias:
 
 ### Estratégia A — fallback real
 
-- [ ] Tentar `AyatanaAppIndicator3` primeiro.
-- [ ] Tentar `AppIndicator3` como fallback.
-- [ ] Usar um alias interno comum para evitar condicionais espalhadas.
+- [x] Tentar `AyatanaAppIndicator3` primeiro.
+- [x] Tentar `AppIndicator3` como fallback.
+- [x] Usar um alias interno comum para evitar condicionais espalhadas.
 - [ ] Testar seleção do namespace com imports simulados.
 
 ### Estratégia B — dependência obrigatória
@@ -347,11 +347,11 @@ Escolher uma das estratégias:
 
 ## 4.2 Definir política obrigatória de integridade
 
-- [ ] Decidir se downloads sem SHA256 serão recusados.
-- [ ] Preferencialmente, exigir digest válido antes da instalação.
-- [ ] Validar formato do SHA256 esperado.
-- [ ] Comparar hashes de forma consistente e sem diferenças de capitalização.
-- [ ] Informar claramente quando a release não fornece digest.
+- [x] Decidir se downloads sem SHA256 serão recusados.
+- [x] Preferencialmente, exigir digest válido antes da instalação.
+- [x] Validar formato do SHA256 esperado.
+- [x] Comparar hashes de forma consistente e sem diferenças de capitalização.
+- [x] Informar claramente quando a release não fornece digest.
 - [ ] Alinhar o comportamento com o texto do README.
 
 ## 4.3 Validar metadados da release

@@ -19,9 +19,13 @@ gi.require_version("Gtk", "3.0")
 
 try:
     gi.require_version("AyatanaAppIndicator3", "0.1")
-    from gi.repository import AyatanaAppIndicator3
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator
 except ValueError:
-    print("Warning: AyatanaAppIndicator3 not found, trying fallback", file=sys.stderr)
+    try:
+        gi.require_version("AppIndicator3", "0.1")
+        from gi.repository import AppIndicator3 as AppIndicator
+    except ValueError:
+        AppIndicator = None
 
 gi.require_version("Notify", "0.7")
 from gi.repository import Gio, GLib, Gtk, Notify
@@ -152,7 +156,7 @@ class LlamaProcessManager:
     ) -> None:
         self.config = config
         self.profiles_manager = profiles_manager
-        self.process = None
+        self.process: Optional[subprocess.Popen[str]] = None
         self.log_file_path = os.path.join(updater.LOG_DIR, "llama.log")
         self.logger = setup_logger(self.log_file_path)
         self.on_unexpected_exit = on_unexpected_exit
@@ -258,12 +262,16 @@ class LlamaProcessManager:
             return
 
         try:
-            # Read stdout line by line as it comes
-            for line in iter(proc.stdout.readline, ""):
-                if line:
-                    self.logger.info(line.strip())
+            stdout = proc.stdout
+            if stdout is None:
+                exit_code = proc.wait()
+            else:
+                # Read stdout line by line as it comes
+                for line in iter(stdout.readline, ""):
+                    if line:
+                        self.logger.info(line.strip())
 
-            exit_code = proc.wait()
+                exit_code = proc.wait()
         except Exception:
             exit_code = -1
 
@@ -273,18 +281,20 @@ class LlamaProcessManager:
                 GLib.idle_add(self.on_unexpected_exit, exit_code)
 
     def stop(self) -> tuple[bool, str]:
-        if not self.is_running():
+        proc = self.process
+        if proc is None or proc.poll() is not None:
             return True, ""
 
         self.intentional_stop = True
         try:
-            self.process.terminate()
+            proc.terminate()
             try:
-                self.process.wait(timeout=2.0)
+                proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-            self.process = None
+                proc.kill()
+                proc.wait()
+            if self.process is proc:
+                self.process = None
             return True, ""
         except Exception as e:
             return False, f"Error stopping process: {e}"
@@ -415,13 +425,12 @@ class SettingsWindow(LlamaWindow):
         self.set_resizable(True)
 
         self.download_thread = None
+        self.pending_apply = None
         self.releases_list = []
         self.online_releases_loaded = False
         self.fetch_error_msg = ""
 
         self.profiles_manager = self.logic_app.profiles_manager
-        import copy
-
         self.local_profiles = copy.deepcopy(self.profiles_manager.profiles)
         self.current_profile_name = self.logic_app.config.get(
             "current_profile", "Default"
@@ -914,42 +923,87 @@ class SettingsWindow(LlamaWindow):
         else:
             self.action_btn.set_label("Download, Install and Apply")
 
+    def _build_pending_apply(self, version, backend):
+        return {"version": version, "backend": backend}
+
+    def _save_independent_settings(self, autostart_mode):
+        """Persist profiles and global preferences independently of a download."""
+        self.profiles_manager.profiles = copy.deepcopy(self.local_profiles)
+        self.profiles_manager.save()
+        terminal_integration = self.term_check.get_active()
+        self.logic_app.config.set_bulk(
+            {
+                "terminal_integration": terminal_integration,
+                "current_profile": self.current_profile_name,
+                "autostart": autostart_mode,
+            }
+        )
+
+        current_version = self.logic_app.config.get("current_version")
+        current_backend = self.logic_app.config.get("backend", "vulkan")
+        version_id = (
+            updater.get_version_id(current_version, current_backend)
+            if current_version
+            else None
+        )
+        link_result = updater.manage_symlinks(version_id, terminal_integration)
+        if not link_result and (version_id or not terminal_integration):
+            self.logic_app.show_notification(
+                "Terminal Integration",
+                link_result.error or "Could not update links.",
+                "error",
+            )
+        if not updater.manage_autostart(autostart_mode):
+            self.logic_app.show_notification(
+                "Autostart", "Could not update autostart configuration.", "error"
+            )
+
+    def _apply_pending_settings(self, pending):
+        self.logic_app.config.set_bulk(
+            {
+                "current_version": pending["version"],
+                "backend": pending["backend"],
+            }
+        )
+
+        version_id = updater.get_version_id(pending["version"], pending["backend"])
+        link_result = updater.manage_symlinks(
+            version_id, self.logic_app.config.get("terminal_integration", False)
+        )
+        if not link_result:
+            self.logic_app.show_notification(
+                "Terminal Integration",
+                link_result.error or "Could not update links.",
+                "error",
+            )
+
     def on_action_clicked(self, widget):
         selected_version = self.get_selected_version()
         backend = self.backend_combo.get_active_id()
         autostart_mode = self.autostart_combo.get_active_id()
 
-        if not selected_version or selected_version in ("loading", "none"):
+        if (
+            not selected_version
+            or selected_version in ("loading", "none")
+            or not backend
+        ):
             self.set_status_message(
                 "<span color='red'>Please select a valid llama.cpp version.</span>",
                 is_markup=True,
             )
             return
 
-        self.profiles_manager.profiles = self.local_profiles
-        self.profiles_manager.save()
-
-        self.logic_app.config.set_bulk(
-            {
-                "backend": backend,
-                "terminal_integration": self.term_check.get_active(),
-                "current_profile": self.current_profile_name,
-                "autostart": autostart_mode,
-            }
-        )
-
-        version_id = updater.get_version_id(selected_version, backend)
-        updater.manage_symlinks(version_id, self.term_check.get_active())
-        updater.manage_autostart(autostart_mode)
-
+        self._save_independent_settings(autostart_mode)
+        pending = self._build_pending_apply(selected_version, backend)
         if updater.is_version_installed(selected_version, backend):
-            self.logic_app.config.set("current_version", selected_version)
-
+            self._apply_pending_settings(pending)
             if self.logic_app.process_manager.is_running():
                 self.logic_app.restart_server()
             self.destroy()
-        else:
-            self.start_download(selected_version, backend)
+            return
+
+        self.pending_apply = pending
+        self.start_download(selected_version, backend)
 
     def start_download(self, tag_name, backend):
         download_info, err_msg = updater.prepare_download(
@@ -999,13 +1053,15 @@ class SettingsWindow(LlamaWindow):
         self.progress_bar.set_fraction(fraction)
 
     def on_download_done(self, tag_name, target_dir):
-        self.logic_app.config.set("current_version", tag_name)
+        pending = self.pending_apply
+        if not pending or pending["version"] != tag_name:
+            self.on_download_error(
+                "Downloaded version no longer matches pending settings."
+            )
+            return
 
-        backend = self.backend_combo.get_active_id() or "vulkan"
-        version_id = updater.get_version_id(tag_name, backend)
-        integration_enabled = self.logic_app.config.get("terminal_integration", False)
-        updater.manage_symlinks(version_id, integration_enabled)
-
+        self._apply_pending_settings(pending)
+        self.pending_apply = None
         self.logic_app.show_notification(
             "Download Complete", f"Version {tag_name} installed successfully!"
         )
@@ -1018,6 +1074,7 @@ class SettingsWindow(LlamaWindow):
         self.destroy()
 
     def on_download_error(self, err_msg):
+        self.pending_apply = None
         self.set_sensitive_inputs(True)
         self.progress_bar.hide()
         self.set_status_message("")
@@ -1088,8 +1145,8 @@ class LlamaTrayApp(Gtk.Application):
             version_id = updater.get_version_id(current_version, backend)
             updater.manage_symlinks(version_id, integration_enabled)
         else:
-            # Ensure no stray links if no version is active
-            updater.manage_symlinks(None, integration_enabled)
+            # No active version means no terminal links should remain.
+            updater.manage_symlinks(None, False)
 
         # Sync autostart configuration
         autostart_mode = self.config.get("autostart", "Disabled")
@@ -1097,12 +1154,16 @@ class LlamaTrayApp(Gtk.Application):
 
         self.hold()
 
-        self.indicator = AyatanaAppIndicator3.Indicator.new(
+        if AppIndicator is None:
+            raise RuntimeError(
+                "Neither AyatanaAppIndicator3 nor AppIndicator3 is available."
+            )
+        self.indicator = AppIndicator.Indicator.new(
             "llama-tray",
             "llama-tray-stopped-symbolic",
-            AyatanaAppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+            AppIndicator.IndicatorCategory.APPLICATION_STATUS,
         )
-        self.indicator.set_status(AyatanaAppIndicator3.IndicatorStatus.ACTIVE)
+        self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
 
         self.menu = Gtk.Menu()
         self.indicator.set_menu(self.menu)

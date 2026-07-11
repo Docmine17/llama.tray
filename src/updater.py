@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import tarfile
 import tempfile
@@ -9,7 +10,9 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
 from typing import Callable, Optional
 
 from gi.repository import GLib
@@ -47,7 +50,7 @@ def get_system_arch() -> str:
         return "x64"
     if arch in ("aarch64", "arm64"):
         return "arm64"
-    return "x64"  # Fallback to x64
+    raise RuntimeError(f"Unsupported system architecture: {arch}")
 
 
 def get_version_id(tag_name: str, backend: str) -> str:
@@ -88,7 +91,11 @@ def get_releases(force_check: bool = False) -> list[dict]:
         except IOError:
             pass
 
-        return releases
+        return [
+            release
+            for release in releases
+            if not release.get("draft", False) and not release.get("prerelease", False)
+        ]
     except urllib.error.URLError as e:
         raise RuntimeError(f"Connection error while fetching updates: {e.reason}")
     except Exception as e:
@@ -97,7 +104,7 @@ def get_releases(force_check: bool = False) -> list[dict]:
 
 def get_asset_for_backend(
     release: dict, backend: str
-) -> Optional[tuple[str, str, Optional[str]]]:
+) -> Optional[tuple[str, str, str]]:
     """Finds the correct asset in the release based on the specified backend."""
     assets = release.get("assets", [])
     system_arch = get_system_arch()
@@ -107,19 +114,22 @@ def get_asset_for_backend(
         if not (name.startswith("llama-") and name.endswith(".tar.gz")):
             continue
 
-        if backend == "vulkan":
-            # Must contain 'vulkan' and match the actual system architecture
-            if "vulkan" in name and f"{system_arch}.tar.gz" in name:
-                digest = asset.get("digest", "")
-                sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
-                return name, asset.get("browser_download_url"), sha256
-        else:
-            # CPU backend: Must match 'bin-ubuntu-<arch>.tar.gz'
-            # This avoids picking up any other specialized backends (ROCm, OpenVINO, CUDA, etc.)
-            if name.endswith(f"bin-ubuntu-{system_arch}.tar.gz"):
-                digest = asset.get("digest", "")
-                sha256 = digest.split("sha256:")[-1] if "sha256:" in digest else None
-                return name, asset.get("browser_download_url"), sha256
+        is_compatible = (
+            "vulkan" in name and f"{system_arch}.tar.gz" in name
+            if backend == "vulkan"
+            else name.endswith(f"bin-ubuntu-{system_arch}.tar.gz")
+        )
+        if not is_compatible:
+            continue
+
+        download_url = asset.get("browser_download_url")
+        digest = asset.get("digest", "")
+        sha256 = digest.removeprefix("sha256:").lower()
+        if not isinstance(download_url, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", sha256
+        ):
+            continue
+        return name, download_url, sha256
 
     return None
 
@@ -194,51 +204,90 @@ def get_version_binaries(version_id: str) -> list[str]:
     ]
 
 
-def manage_symlinks(version_id: Optional[str], enabled: bool) -> bool:
-    """
-    Creates or removes symlinks for llama binaries in ~/.local/bin.
+@dataclass
+class SymlinkResult:
+    """Outcome of updating optional terminal-integration symlinks."""
+
+    success: bool
+    conflicts: list[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.success
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """Return whether a resolved path is contained by root."""
+    try:
+        path.resolve(strict=False).relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _is_managed_symlink(path: Path) -> bool:
+    return path.is_symlink() and _is_within(path, INSTALL_DIR)
+
+
+def _managed_symlinks() -> list[Path]:
+    if not BIN_LINK_DIR.exists():
+        return []
+    return [path for path in BIN_LINK_DIR.iterdir() if _is_managed_symlink(path)]
+
+
+def manage_symlinks(version_id: Optional[str], enabled: bool) -> SymlinkResult:
+    """Safely synchronize terminal links owned by llama.tray.
+
+    Files and links not pointing inside ``INSTALL_DIR`` are never removed. When
+    enabled, conflicts are reported and left intact rather than overwritten.
     """
     try:
-        # We need a version_id to know which binaries to link or unlink
-        if not version_id:
-            return False
-
-        binaries = get_version_binaries(version_id)
-
         if not enabled:
-            # Remove existing links for the current version's binaries
-            for bin_name in binaries:
-                link_path = BIN_LINK_DIR / bin_name
-                if link_path.is_symlink() or link_path.exists():
-                    link_path.unlink()
-            return True
+            for link_path in _managed_symlinks():
+                link_path.unlink()
+            return SymlinkResult(True)
 
-        # Ensure ~/.local/bin exists
-        BIN_LINK_DIR.mkdir(parents=True, exist_ok=True)
+        if not version_id:
+            return SymlinkResult(False, error="No installed version was selected.")
 
         target_dir = INSTALL_DIR / version_id
-        if not target_dir.exists():
-            return False
+        if not target_dir.is_dir():
+            return SymlinkResult(
+                False, error=f"Version '{version_id}' is not installed."
+            )
 
-        for bin_name in binaries:
-            bin_path = target_dir / bin_name
-            # Binary check already done in get_version_binaries, but safety first
-            if not bin_path.exists():
-                continue
+        binaries = get_version_binaries(version_id)
+        desired = {name: target_dir / name for name in binaries}
+        BIN_LINK_DIR.mkdir(parents=True, exist_ok=True)
 
-            link_path = BIN_LINK_DIR / bin_name
+        conflicts = [
+            name
+            for name in desired
+            if (BIN_LINK_DIR / name).exists() or (BIN_LINK_DIR / name).is_symlink()
+            if not _is_managed_symlink(BIN_LINK_DIR / name)
+        ]
 
-            # Remove old link/file if it exists
-            if link_path.is_symlink() or link_path.exists():
+        for link_path in _managed_symlinks():
+            if link_path.name not in desired or link_path.name not in conflicts:
                 link_path.unlink()
 
-            # Create new symlink
-            link_path.symlink_to(bin_path)
+        for name, target in desired.items():
+            if name in conflicts:
+                continue
+            link_path = BIN_LINK_DIR / name
+            if _is_managed_symlink(link_path):
+                link_path.unlink()
+            link_path.symlink_to(target)
 
-        return True
-    except Exception as e:
-        print(f"Error managing symlinks: {e}")
-        return False
+        if conflicts:
+            return SymlinkResult(
+                False,
+                conflicts=sorted(conflicts),
+                error="Existing files were preserved: " + ", ".join(sorted(conflicts)),
+            )
+        return SymlinkResult(True)
+    except OSError as error:
+        return SymlinkResult(False, error=f"Could not update terminal links: {error}")
 
 
 def manage_autostart(mode: str) -> bool:
@@ -276,7 +325,7 @@ def manage_autostart(mode: str) -> bool:
 
 def prepare_download(
     tag_name: str, backend: str, releases_list: list[dict]
-) -> tuple[Optional[tuple[str, str, Optional[str]]], str]:
+) -> tuple[Optional[tuple[str, str, str]], Optional[str]]:
     """
     Resolves the necessary metadata for a download.
     Returns ((version_id, download_url, expected_sha256), error_msg) or (None, error_msg).
@@ -300,19 +349,200 @@ def prepare_download(
     return (version_id, download_url, expected_sha256), None
 
 
+def _archive_parts(name: str) -> tuple[str, ...]:
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"Unsafe archive path: {name!r}")
+    parts = tuple(part for part in path.parts if part not in ("", "."))
+    if not parts:
+        raise ValueError("Archive member has an empty path.")
+    return parts
+
+
+def _archive_entries(
+    members: list[tarfile.TarInfo],
+) -> list[tuple[tarfile.TarInfo, tuple[str, ...]]]:
+    entries = [(member, _archive_parts(member.name)) for member in members]
+    top_levels = {parts[0] for _, parts in entries}
+    prefix = next(iter(top_levels)) if len(top_levels) == 1 else None
+
+    normalized = []
+    for member, parts in entries:
+        effective_parts = parts[1:] if prefix and parts[0] == prefix else parts
+        if effective_parts:
+            normalized.append((member, effective_parts))
+    return normalized
+
+
+def _ensure_safe_parent(root: Path, destination: Path) -> None:
+    parent = destination.parent
+    parent.relative_to(root)
+    current = root
+    for part in parent.relative_to(root).parts:
+        current /= part
+        if current.is_symlink() or (current.exists() and not current.is_dir()):
+            raise ValueError(f"Unsafe archive parent: {current}")
+        current.mkdir(exist_ok=True)
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
+def _link_destination(root: Path, destination: Path, link_name: str) -> Path:
+    link_path = PurePosixPath(link_name)
+    if link_path.is_absolute():
+        raise ValueError(f"Absolute symlink target is not allowed: {link_name!r}")
+    target = (destination.parent / Path(*link_path.parts)).resolve(strict=False)
+    if not _is_within(target, root):
+        raise ValueError(f"Symlink target escapes installation: {link_name!r}")
+    return target
+
+
+def _hard_link_destination(root: Path, link_name: str, prefix: Optional[str]) -> Path:
+    parts = _archive_parts(link_name)
+    if prefix and parts[0] == prefix:
+        parts = parts[1:]
+    if not parts:
+        raise ValueError(f"Invalid hard link target: {link_name!r}")
+    target = root.joinpath(*parts)
+    if not _is_within(target, root):
+        raise ValueError(f"Hard link target escapes installation: {link_name!r}")
+    return target
+
+
+def validate_installation(install_dir: Path) -> None:
+    """Validate only that extracted symlinks remain internal and resolvable."""
+    for path in install_dir.rglob("*"):
+        if path.is_symlink():
+            target = path.resolve(strict=False)
+            if not _is_within(target, install_dir) or not target.exists():
+                raise RuntimeError(f"Invalid internal symlink: {path.name}")
+
+
+def extract_archive_safely(
+    archive_path: Path,
+    destination: Path,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> None:
+    """Extract an official llama.cpp archive without allowing path escapes."""
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+
+    try:
+        with tarfile.open(archive_path, "r:gz") as archive:
+            entries = _archive_entries(archive.getmembers())
+            top_levels = {
+                parts[0]
+                for member, parts in [
+                    (m, _archive_parts(m.name)) for m in archive.getmembers()
+                ]
+            }
+            prefix = next(iter(top_levels)) if len(top_levels) == 1 else None
+
+            directories = []
+            regular_files = []
+            symlinks = []
+            hard_links = []
+            for member, parts in entries:
+                if member.isdir():
+                    directories.append((member, parts))
+                elif member.isreg():
+                    regular_files.append((member, parts))
+                elif member.issym():
+                    symlinks.append((member, parts))
+                elif member.islnk():
+                    hard_links.append((member, parts))
+                else:
+                    raise ValueError(
+                        f"Unsupported archive member type: {member.name!r}"
+                    )
+
+            for member, parts in directories:
+                if should_cancel and should_cancel():
+                    return
+                destination_path = root.joinpath(*parts)
+                _ensure_safe_parent(root, destination_path)
+                destination_path.mkdir(exist_ok=True)
+
+            for member, parts in regular_files:
+                if should_cancel and should_cancel():
+                    return
+                destination_path = root.joinpath(*parts)
+                _ensure_safe_parent(root, destination_path)
+                if destination_path.exists() or destination_path.is_symlink():
+                    raise ValueError(f"Duplicate archive path: {member.name!r}")
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ValueError(f"Could not read archive member: {member.name!r}")
+                with source, destination_path.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+                os.chmod(destination_path, member.mode & 0o777)
+
+            for member, parts in symlinks:
+                if should_cancel and should_cancel():
+                    return
+                destination_path = root.joinpath(*parts)
+                _ensure_safe_parent(root, destination_path)
+                if destination_path.exists() or destination_path.is_symlink():
+                    raise ValueError(f"Duplicate archive path: {member.name!r}")
+                _link_destination(root, destination_path, member.linkname)
+                destination_path.symlink_to(member.linkname)
+
+            for member, parts in hard_links:
+                if should_cancel and should_cancel():
+                    return
+                destination_path = root.joinpath(*parts)
+                _ensure_safe_parent(root, destination_path)
+                if destination_path.exists() or destination_path.is_symlink():
+                    raise ValueError(f"Duplicate archive path: {member.name!r}")
+                target = _hard_link_destination(root, member.linkname, prefix)
+                if target.is_symlink() or not target.is_file():
+                    raise ValueError(f"Invalid hard link target: {member.linkname!r}")
+                os.link(target, destination_path)
+    except (OSError, tarfile.TarError, ValueError) as error:
+        raise RuntimeError(f"Failed to extract archive: {error}") from error
+
+    if should_cancel and should_cancel():
+        return
+    validate_installation(root)
+
+
+def publish_installation(staging_dir: Path, target_dir: Path) -> None:
+    """Atomically replace a version directory while retaining a recoverable backup."""
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    backup_dir = target_dir.with_name(f".{target_dir.name}.backup-{uuid.uuid4().hex}")
+    moved_previous = False
+
+    try:
+        if target_dir.exists() or target_dir.is_symlink():
+            os.replace(target_dir, backup_dir)
+            moved_previous = True
+        os.replace(staging_dir, target_dir)
+    except OSError:
+        if moved_previous and not (target_dir.exists() or target_dir.is_symlink()):
+            os.replace(backup_dir, target_dir)
+        raise
+    else:
+        if moved_previous:
+            _remove_path(backup_dir)
+
+
 class DownloadThread(threading.Thread):
     def __init__(
         self,
-        tag_name,
-        version_id,
-        download_url,
-        expected_sha256,
-        on_progress,
-        on_done,
-        on_error,
-    ):
-        super().__init__()
-        self.daemon = True
+        tag_name: str,
+        version_id: str,
+        download_url: str,
+        expected_sha256: str,
+        on_progress: Optional[Callable[[str, float], None]],
+        on_done: Callable[[str, str], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        super().__init__(daemon=True)
         self.tag_name = tag_name
         self.version_id = version_id
         self.download_url = download_url
@@ -322,137 +552,77 @@ class DownloadThread(threading.Thread):
         self.on_error = on_error
         self._stop_event = threading.Event()
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
-    def run(self):
-        temp_file = None
-        temp_file_path = None
-        target_dir = INSTALL_DIR / self.version_id
+    def _notify_progress(self, message: str, fraction: float) -> None:
+        if self.on_progress:
+            GLib.idle_add(self.on_progress, message, fraction)
+
+    def run(self) -> None:
+        temp_file_path: Optional[Path] = None
+        staging_dir: Optional[Path] = None
 
         try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
             req = urllib.request.Request(
                 self.download_url, headers={"User-Agent": "llama.tray-updater"}
             )
-
-            # Set a socket-level read timeout so stalled transfers don't hang forever
             with urllib.request.urlopen(req, timeout=30) as response:
                 total_size = int(response.headers.get("content-length", 0))
                 downloaded = 0
-                block_size = 8192
-
+                sha256_hash = hashlib.sha256()
                 fd, temp_file_path_str = tempfile.mkstemp(
-                    dir=str(CACHE_DIR), suffix=".tar.gz"
+                    dir=CACHE_DIR, suffix=".tar.gz"
                 )
                 temp_file_path = Path(temp_file_path_str)
 
-                sha256_hash = hashlib.sha256()
-
-                # Use try/finally to guarantee the fd is closed even on exceptions
-                try:
-                    temp_file = os.fdopen(fd, "wb")
-                    # Apply a per-read socket timeout to prevent hanging on stalled data
-                    response.fp.raw._sock.settimeout(30)
-                except Exception:
-                    # If fdopen or settimeout fail, close the raw fd and re-raise
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-                    raise
-
-                try:
+                with os.fdopen(fd, "wb") as temp_file:
                     while not self._stop_event.is_set():
-                        block = response.read(block_size)
+                        block = response.read(8192)
                         if not block:
                             break
                         temp_file.write(block)
                         sha256_hash.update(block)
                         downloaded += len(block)
-
-                        if total_size > 0 and self.on_progress:
+                        if total_size > 0:
                             percent = int((downloaded / total_size) * 100)
-                            GLib.idle_add(
-                                self.on_progress,
-                                f"Downloading: {percent}%",
-                                percent / 100.0,
+                            self._notify_progress(
+                                f"Downloading: {percent}%", percent / 100.0
                             )
-                finally:
-                    temp_file.close()
 
-                if self._stop_event.is_set():
-                    if temp_file_path.exists():
-                        temp_file_path.unlink()
-                    return
+            if self._stop_event.is_set():
+                return
 
-                calculated_sha = sha256_hash.hexdigest()
-                if self.expected_sha256 and calculated_sha != self.expected_sha256:
-                    if temp_file_path.exists():
-                        temp_file_path.unlink()
-                    raise ValueError(
-                        f"Integrity check failed (Incorrect SHA256).\n"
-                        f"Expected: {self.expected_sha256}\n"
-                        f"Calculated: {calculated_sha}"
-                    )
-
-            GLib.idle_add(self.on_progress, "Extracting binaries...", 0.99)
-
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-            target_dir.mkdir(parents=True, exist_ok=True)
-
-            try:
-                with tarfile.open(temp_file_path, "r:gz") as tar:
-                    members = tar.getmembers()
-                    top_dirs = set()
-                    for m in members:
-                        parts = m.name.split("/")
-                        if len(parts) > 1:
-                            top_dirs.add(parts[0])
-
-                    strip_prefix = (top_dirs.pop() + "/") if len(top_dirs) == 1 else ""
-
-                    for member in members:
-                        # --- Path traversal protection ---
-                        # Reject absolute paths and any component that resolves outside target_dir
-                        if os.path.isabs(member.name) or ".." in member.name.split("/"):
-                            continue
-
-                        # Strip the single top-level directory if present
-                        effective_name = member.name
-                        if strip_prefix and effective_name.startswith(strip_prefix):
-                            effective_name = effective_name[len(strip_prefix) :]
-                        if not effective_name:
-                            continue
-
-                        # Final safety check: resolved path must stay inside target_dir
-                        dest = (target_dir / effective_name).resolve()
-                        if not str(dest).startswith(str(target_dir.resolve())):
-                            continue
-
-                        member.name = effective_name
-                        tar.extract(member, path=str(target_dir))
-
-            except Exception as e:
-                if target_dir.exists():
-                    shutil.rmtree(target_dir)
-                raise RuntimeError(f"Failed to extract archive: {e}")
-            finally:
-                if temp_file_path and temp_file_path.exists():
-                    temp_file_path.unlink()
-
-            server_bin = target_dir / "llama-server"
-            if not server_bin.exists():
-                raise RuntimeError(
-                    "Extracted archive does not contain the 'llama-server' executable."
+            calculated_sha = sha256_hash.hexdigest()
+            if calculated_sha != self.expected_sha256:
+                raise ValueError(
+                    "Integrity check failed (Incorrect SHA256).\n"
+                    f"Expected: {self.expected_sha256}\n"
+                    f"Calculated: {calculated_sha}"
                 )
 
-            # llama.cpp binaries already have execution permissions.
+            self._notify_progress("Extracting binaries...", 0.99)
+            INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+            staging_dir = Path(
+                tempfile.mkdtemp(prefix=f".{self.version_id}.", dir=INSTALL_DIR)
+            )
+            extract_archive_safely(
+                temp_file_path, staging_dir, should_cancel=self._stop_event.is_set
+            )
+            if self._stop_event.is_set():
+                return
 
-            GLib.idle_add(self.on_progress, "Installation complete!", 1.0)
+            target_dir = INSTALL_DIR / self.version_id
+            publish_installation(staging_dir, target_dir)
+            staging_dir = None
+            self._notify_progress("Installation complete!", 1.0)
             GLib.idle_add(self.on_done, self.tag_name, str(target_dir))
-
-        except Exception as e:
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-            GLib.idle_add(self.on_error, str(e))
+        except Exception as error:
+            if not self._stop_event.is_set():
+                GLib.idle_add(self.on_error, str(error))
+        finally:
+            if temp_file_path and temp_file_path.exists():
+                temp_file_path.unlink()
+            if staging_dir and staging_dir.exists():
+                _remove_path(staging_dir)
