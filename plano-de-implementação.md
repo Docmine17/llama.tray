@@ -28,7 +28,7 @@ Este documento organiza as melhorias em etapas pequenas e verificáveis. A ordem
 - [ ] **Fase 3:** tornar a aplicação de configurações transacional
 - [ ] **Fase 4:** corrigir AppIndicator e validação de integridade
 - [ ] **Fase 5:** tornar persistência atômica e validada
-- [ ] **Fase 6:** melhorar tipos, responsabilidades e estrutura do código
+- [x] **Fase 6:** melhorar tipos, responsabilidades e estrutura do código
 - [ ] **Fase 7:** fortalecer `setup.sh` e empacotamento
 - [ ] **Fase 8:** completar documentação e validação final
 
@@ -470,71 +470,71 @@ Escolher uma das estratégias:
 
 ## 6.1 Limpeza imediata e de baixo risco
 
-- [ ] Remover import duplicado/não utilizado de `copy`.
-- [ ] Remover `Callable` não utilizado em `updater.py` ou utilizá-lo corretamente.
-- [ ] Corrigir o tipo de retorno de `prepare_download()`.
-- [ ] Tipar `self.process` como `Optional[subprocess.Popen[str]]`.
-- [ ] Capturar referências locais do processo antes de `terminate()`, `wait()` e `kill()`.
-- [ ] Adicionar tipos aos callbacks de download.
-- [ ] Adicionar tipos aos métodos principais das janelas.
-- [ ] Configurar exceções conhecidas para diagnósticos dinâmicos do PyGObject sem desabilitar toda a análise.
+- [x] Remover import duplicado/não utilizado de `copy`.
+- [x] Remover `Callable` não utilizado em `updater.py` ou utilizá-lo corretamente.
+- [x] Corrigir o tipo de retorno de `prepare_download()`.
+- [x] Tipar `self.process` como `Optional[subprocess.Popen[str]]`.
+- [x] Capturar referências locais do processo antes de `terminate()`, `wait()` e `kill()`.
+- [x] Adicionar tipos aos callbacks de download.
+- [x] Adicionar tipos aos métodos principais das janelas.
+- [x] Configurar exceções conhecidas para diagnósticos dinâmicos do PyGObject sem desabilitar toda a análise.
 
 ## 6.2 Extrair persistência e domínio
 
 Ordem recomendada:
 
-- [ ] Extrair `LlamaConfig` para `src/config.py`.
-- [ ] Extrair `LlamaProfilesManager` para `src/profiles.py`.
-- [ ] Extrair `LlamaProcessManager` para `src/process_manager.py`.
-- [ ] Ajustar imports e instalação em `setup.sh` para copiar todos os módulos.
-- [ ] Manter interfaces públicas pequenas e explícitas.
-- [ ] Evitar dependência de GTK nos módulos de configuração e perfis.
-- [ ] Injetar caminhos e callbacks para facilitar testes.
+- [x] Extrair `LlamaConfig` para `src/config.py`.
+- [x] Extrair `LlamaProfilesManager` para `src/profiles.py`.
+- [x] Extrair `LlamaProcessManager` to `src/process_manager.py`.
+- [x] Ajustar imports e instalação em `setup.sh` para copiar todos os módulos.
+- [x] Manter interfaces públicas pequenas e explícitas.
+- [x] Evitar dependência de GTK nos módulos de configuração e perfis.
+- [x] Injetar caminhos e callbacks para facilitar testes.
 
 ## 6.3 Extrair interface gráfica progressivamente
 
-- [ ] Criar `src/ui/` como pacote Python, se a estrutura de instalação suportar pacotes.
-- [ ] Extrair `LogsWindow`.
-- [ ] Extrair `SettingsWindow`.
-- [ ] Manter `LlamaTrayApp` como coordenador principal.
-- [ ] Evitar que widgets acessem diretamente estruturas internas mutáveis.
-- [ ] Introduzir pequenos modelos de estado ou serviços, sem framework adicional.
+- [x] Criar `src/ui/` como pacote Python (Modularizado no diretório raiz `src/` como `ui_*.py` para manter compatibilidade com a cópia direta de arquivos Python do script de setup).
+- [x] Extrair `LogsWindow`.
+- [x] Extrair `SettingsWindow`.
+- [x] Manter `LlamaTrayApp` como coordenador principal.
+- [x] Evitar que widgets acessem diretamente estruturas internas mutáveis.
+- [x] Introduzir pequenos modelos de estado ou serviços, sem framework adicional.
 
 ## 6.4 Melhorar tratamento de erros e logging
 
-- [ ] Definir exceções específicas para configuração, download, extração e integração.
-- [ ] Evitar `except Exception` onde seja possível tratar erros conhecidos.
-- [ ] Não ignorar silenciosamente falhas relevantes.
-- [ ] Diferenciar mensagens para usuário de detalhes técnicos de log.
-- [ ] Definir logger do próprio aplicativo além do logger do `llama-server`.
-- [ ] Evitar registrar conteúdo sensível das variáveis de ambiente.
+- [x] Definir exceções específicas para configuração, download, extração e integração.
+- [x] Evitar `except Exception` onde seja possível tratar erros conhecidos.
+- [x] Não ignorar silenciosamente falhas relevantes.
+- [x] Diferenciar mensagens para usuário de detalhes técnicos de log.
+- [x] Definir logger do próprio aplicativo além do logger do `llama-server`.
+- [x] Evitar registrar conteúdo sensível das variáveis de ambiente.
 
 ## 6.5 Melhorar controle do processo
 
-- [ ] Avaliar o risco de `preexec_fn` em aplicação com threads.
-- [ ] Preferir mecanismos que não executem Python entre `fork` e `exec`.
-- [ ] Definir claramente se o processo inteiro ou o grupo de processos deve ser encerrado.
-- [ ] Se necessário, enviar sinais ao grupo criado por `start_new_session=True`.
-- [ ] Fechar pipes explicitamente.
-- [ ] Garantir que estado e callbacks permaneçam corretos em corridas entre saída natural e `stop()`.
-- [ ] Criar testes com processo auxiliar curto.
+- [x] Avaliar o risco de `preexec_fn` em aplicação com threads.
+- [x] Preferir mecanismos que não executem Python entre `fork` e `exec`.
+- [x] Definir claramente se o processo inteiro ou o grupo de processos deve ser encerrado.
+- [x] Se necessário, enviar sinais ao grupo criado por `start_new_session=True`.
+- [x] Fechar pipes explicitamente.
+- [x] Garantir que estado e callbacks permaneçam corretos em corridas entre saída natural e `stop()`.
+- [x] Criar testes com processo auxiliar curto.
 
 ## 6.6 Melhorar a experiência da janela de configurações
 
-- [ ] Validar nome vazio de perfil com mensagem visual.
-- [ ] Validar nome duplicado com mensagem visual.
-- [ ] Impedir que o campo mostre valor diferente do estado realmente salvo.
-- [ ] Confirmar exclusão de perfil quando houver dados personalizados.
-- [ ] Informar claramente alterações não salvas.
-- [ ] Definir comportamento ao tentar fechar a janela durante download.
+- [x] Validar nome vazio de perfil com mensagem visual.
+- [x] Validar nome duplicado com mensagem visual.
+- [x] Impedir que o campo mostre valor diferente do estado realmente salvo.
+- [x] Confirmar exclusão de perfil quando houver dados personalizados.
+- [x] Informar claramente alterações não salvas.
+- [x] Definir comportamento ao tentar fechar a janela durante download.
 
 ## 6.7 Critérios de aceite da fase
 
-- [ ] `main.py` deixa de conter persistência e gerenciamento direto do processo.
-- [ ] Módulos não gráficos podem ser importados e testados sem iniciar GTK.
-- [ ] Refatorações não mudam caminhos de dados nem formato de configuração sem migração.
-- [ ] Testes existentes continuam passando após cada extração.
-- [ ] Não existem imports duplicados ou tipos de retorno sabidamente incorretos.
+- [x] `main.py` deixa de conter persistência e gerenciamento direto do processo.
+- [x] Módulos não gráficos podem ser importados e testados sem iniciar GTK.
+- [x] Refatorações não mudam caminhos de dados nem formato de configuração sem migração.
+- [x] Testes existentes continuam passando após cada extração.
+- [x] Não existem imports duplicados ou tipos de retorno sabidamente incorretos.
 
 ---
 
