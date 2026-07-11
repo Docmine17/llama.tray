@@ -1,4 +1,12 @@
 #!/bin/bash
+set -euo pipefail
+
+# Validate that the script is run from the repository root
+if [[ ! -f "src/main.py" || ! -d "data" ]]; then
+    echo "ERROR: This script must be run from the llama.tray repository root."
+    echo "Usage: cd /path/to/llama.tray && ./setup.sh"
+    exit 1
+fi
 
 # Default user directories (XDG standard)
 BIN_DIR="$HOME/.local/bin"
@@ -9,6 +17,18 @@ ICONS_DIR="$HOME/.local/share/icons/hicolor"
 CONFIG_DIR="$HOME/.config/llama-tray"
 CACHE_DIR="$HOME/.cache/llama-tray"
 AUTOSTART_FILE="$HOME/.config/autostart/llama-tray.desktop"
+
+# Source modules that need to be installed
+SRC_FILES=(
+    main.py
+    config.py
+    profiles.py
+    process_manager.py
+    updater.py
+    ui_base.py
+    ui_settings.py
+    ui_logs.py
+)
 
 # Function to check if ~/.local/bin is in PATH
 check_path() {
@@ -25,7 +45,9 @@ check_path() {
 remove_symlinks() {
     echo "Removing terminal integration symlinks..."
     # Find and delete any symlink in BIN_DIR that points to the llama-tray share folder
-    find "$BIN_DIR" -lname "*$SHARE_DIR*" -type l -delete
+    if [[ -d "$BIN_DIR" ]]; then
+        find "$BIN_DIR" -lname "*$SHARE_DIR*" -type l -delete
+    fi
 }
 
 # Uninstall function (Standard)
@@ -43,7 +65,9 @@ uninstall() {
     rm -f "$AUTOSTART_FILE"
 
     # 4. Remove icons
-    find "$ICONS_DIR" -name "llama-tray*.svg" -type f -delete
+    if [[ -d "$ICONS_DIR" ]]; then
+        find "$ICONS_DIR" -name "llama-tray*.svg" -type f -delete
+    fi
 
     # 5. Remove terminal integration
     remove_symlinks
@@ -63,7 +87,7 @@ full_cleanup() {
     uninstall
 
     # Then, wipe all data directories
-    echo "Deleting binaries, configs and cache..."
+    echo "Deleting binaries, configs, cache and logs..."
     rm -rf "$SHARE_DIR"
     rm -rf "$CONFIG_DIR"
     rm -rf "$CACHE_DIR"
@@ -82,8 +106,14 @@ install() {
     mkdir -p "$ICONS_DIR/scalable/apps"
     mkdir -p "$ICONS_DIR/scalable/status"
 
-    # 2. Copy Python source code
-    cp src/*.py "$SRC_DIR/"
+    # 2. Copy Python source modules
+    for module in "${SRC_FILES[@]}"; do
+        if [ -f "src/$module" ]; then
+            cp "src/$module" "$SRC_DIR/"
+        else
+            echo "WARNING: Source module 'src/$module' not found, skipping."
+        fi
+    done
 
     # 3. Copy Desktop entry and Icons
     cp data/applications/llama-tray.desktop "$APPS_DIR/"
@@ -121,7 +151,7 @@ echo "      LLAMA.TRAY SETUP MANAGER          "
 echo "========================================"
 echo "1) Install"
 echo "2) Uninstall"
-echo "3) Full Cleanup (Uninstall + Remove all data)"
+echo "3) Full Cleanup (Uninstall + Remove all app data)"
 echo "4) Exit"
 echo "----------------------------------------"
 read -p "Choose an option [1-4]: " choice
@@ -134,7 +164,15 @@ case $choice in
         uninstall
         ;;
     3)
-        full_cleanup
+        echo ""
+        echo "WARNING: This will remove ALL Llama.Tray data, including"
+        echo "downloaded binaries, configurations, cache and logs."
+        read -p "Are you sure? (yes/no): " confirm
+        if [[ "$confirm" == "yes" ]]; then
+            full_cleanup
+        else
+            echo "Cancelled."
+        fi
         ;;
     4)
         echo "Exiting..."
