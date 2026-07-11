@@ -136,9 +136,7 @@ def setup_logger(log_path: str) -> logging.Logger:
         handler = RotatingFileHandler(
             log_path, maxBytes=10 * 1024 * 1024, backupCount=1, encoding="utf-8"
         )
-        formatter = logging.Formatter(
-            "%(message)s"
-        )
+        formatter = logging.Formatter("%(message)s")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
 
@@ -600,9 +598,7 @@ class SettingsWindow(LlamaWindow):
         self.autostart_combo.append("Enabled", "Enabled")
         self.autostart_combo.append("Enabled with Server", "Enabled with Server")
         self.autostart_combo.set_hexpand(True)
-        conf_grid.attach(
-            Gtk.Label(label="Autostart:", xalign=0.0), 0, 3, 1, 1
-        )
+        conf_grid.attach(Gtk.Label(label="Autostart:", xalign=0.0), 0, 3, 1, 1)
         conf_grid.attach(self.autostart_combo, 1, 3, 1, 1)
 
         action_area = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)

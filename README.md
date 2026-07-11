@@ -10,11 +10,13 @@
   - Displays an ordered dropdown with available versions for download or already installed locally (local cache).
   - Automatically downloads and validates the package integrity using **SHA256** hashes.
   - Automatically extracts and configures the executable.
-- **Terminal Integration**: Automatically creates symlinks for `llama-server` and `llama-cli` in `~/.local/bin` if enabled, allowing you to run them directly from your terminal.
+- **Terminal Integration**: Automatically creates symlinks for all available `llama.cpp` executables in `~/.local/bin` if enabled, allowing you to run them directly from your terminal.
 - **Settings Panel**:
-  - Selection of acceleration backend (Vulkan for GPU or default CPU).
+  - Profile management, you can create and switch between different profiles.
   - Custom environment variable definition.
   - Custom command-line argument configuration (e.g., port, host, model paths).
+  - Selection of acceleration backend (Vulkan for GPU or default CPU).
+  - Autostart configuration(Disabled, Enabled and Enabled with Server).
 - **Real-time Log Monitor**:
   - GTK 3-based log viewer with integrated auto-scroll.
   - Automatic log rotation (10 MB limit per file to save disk space).
@@ -24,8 +26,7 @@
 - **llama.cpp binaries installation**: `~/.local/share/llama-tray/bin/<version>/`
 - **Configuration file (JSON)**: `~/.config/llama-tray/config.json`
 - **Server log**: `~/.local/share/llama-tray/llama.log`
-- **Update cache**: `~/.cache/llama-tray/releases_cache.json`
-- **Terminal symlinks (optional)**: `~/.local/bin/llama-server`, `~/.local/bin/llama-cli`
+- **Terminal integration (Optional)**: `integrate llama.cpp binaries`
 
 ## Prerequisites
 
@@ -43,20 +44,6 @@ $ cd llama.tray
 ```
 
 
-```
+```bash
 $ ./setup.sh
-```
-
-To Start the application and start llama-server run:
-
-```
-$ llama-tray --autostart
-```
-
----
-
-To uninstall run:
-
-```
-$ ./setup.sh --uninstall
 ```
